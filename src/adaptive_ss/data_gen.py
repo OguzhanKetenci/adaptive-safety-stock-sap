@@ -244,6 +244,12 @@ def save_sample(ds: Dataset, folder: str | Path) -> None:
 
 
 if __name__ == "__main__":
+    from . import sap_export   # local import: sap_export depends on this module
+
     out = Path(__file__).resolve().parents[2] / "data" / "sample"
-    save_sample(generate(), out)
-    print(f"Sample data written to {out}")
+    data = generate()
+    save_sample(data, out)
+    proposals = sap_export.build_proposals(data)
+    (out / "eisbe_proposals.csv").write_text(sap_export.to_csv(proposals), encoding="utf-8")
+    (out / "mm17_eisbe_upload.csv").write_text(sap_export.mm17_csv(proposals), encoding="utf-8")
+    print(f"Sample data and export files written to {out}")

@@ -59,6 +59,18 @@ Grouped by topic; each line is a choice someone could reasonably have made diffe
 | E4 | Two files: the full proposal list for planners (with reason and MRP controller DISPO), and an MM17 upload file with only the AUTO_UPDATE rows (MATNR;WERKS;EISBE;MINBE). | This separates "inform" from "post". |
 | E5 | The proposal shown is what the job would propose at the end of the horizon, compared with today's MARC values. | This is the first run after 16 months of static settings, so most items need approval. In normal weekly operation the changes would be small and incremental. |
 
+## App
+
+| # | Decision | Why |
+|---|----------|-----|
+| A1 | One Streamlit file with sidebar radio navigation instead of a multipage folder. | Fewer files, matches the target structure, and AppTest can drive the pages through the radio widget. |
+| A2 | Simulation results are cached per parameter set (`st.cache_resource`). Cost parameters are applied afterwards without re-simulating. | Cost assumptions do not change the inventory policy, so moving the cost sliders responds instantly. A full re-simulation takes about 2 seconds. |
+| A3 | Replay uses `st.fragment(run_every=…)` and steps by **wall-clock time**: day += elapsed / interval. | The first version moved one day per refresh and ran at about half the selected speed, because each refresh waits for the charts to render. |
+| A4 | The replay compares two methods (static vs. adaptive) in a sliding 120-day window. The default material is a demand up-shift item. | Four methods at once was unreadable. The up-shift item makes the effect visible within about 2 minutes of playback. |
+| A5 | Planners approve or reject changes in an editable table. Approved rows are added to the MM17 file. | Demonstrates the approval step, which is the key design point, rather than just describing it. |
+| A6 | One fixed colour per method (blue = adaptive, orange = static, …), taken from a validated colour-blind-safe palette. | The colours stay the same when methods are toggled on and off. |
+| A7 | The README uses real app screenshots taken during testing. The GIF is a placeholder. | No screen-recording tool was available in the autonomous session. |
+
 ## Tooling
 
 | # | Decision | Why |
