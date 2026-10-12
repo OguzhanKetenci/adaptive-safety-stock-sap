@@ -1,31 +1,31 @@
 MATNR;WERKS;DISPO;EISBE_OLD;EISBE_NEW;CHANGE_PCT;MINBE_OLD;MINBE_NEW;METHOD;REASON;STATUS
-40001001;1000;P01;938;601;-35.9;2350;1836;rolling;lead-time variability -42%, demand variability +31%, supplier lead time -11% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001002;2000;P02;487;450;-7.6;1542;1427;rolling;Minor statistical update;AUTO_UPDATE
-40001003;1000;P01;239;286;19.7;645;725;rolling;lead-time variability +29% vs. current setting;AUTO_UPDATE
-40001004;2000;P02;157;134;-14.6;433;415;rolling;lead-time variability -20% vs. current setting;AUTO_UPDATE
-40001005;1000;P01;587;581;-1.0;1513;1578;rolling;Minor statistical update;NO_CHANGE
-40001006;1000;P01;196;247;26.0;637;699;rolling;lead-time variability +52%, demand variability -11% vs. current setting;AUTO_UPDATE
-40001007;2000;P02;495;858;73.3;1288;2385;rolling;demand variability +122%, demand mean +85% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001008;1000;P01;154;247;60.4;450;827;rolling;demand mean +84%, demand variability +57%, lead-time variability -13% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001009;2000;P02;667;1228;84.1;2210;4140;rolling;demand mean +93%, demand variability +86% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001010;1000;P01;457;930;103.5;1403;2706;rolling;demand mean +104%, demand variability +95% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001011;1000;P01;171;288;68.4;533;1080;rolling;demand mean +125%, demand variability +70%, lead-time variability -26% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001012;2000;P02;47;20;-57.4;119;58;rolling;demand mean -44%, demand variability -40%, lead-time variability -30% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001013;1000;P01;185;100;-45.9;637;355;rolling;demand variability -47%, demand mean -44% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001014;2000;P02;56;28;-50.0;206;108;rolling;demand variability -53%, demand mean -46% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001015;1000;P01;239;108;-54.8;1056;474;rolling;demand variability -65%, demand mean -57%, lead-time variability +19% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001016;1000;P01;86;130;51.2;283;435;rolling;demand mean +59%, demand variability +53% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001017;2000;P02;50;36;-28.0;188;130;rolling;demand mean -32%, demand variability -26% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001018;1000;P01;124;239;92.7;449;742;rolling;lead-time variability +68%, demand mean +40%, demand variability +39% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001019;2000;P02;74;44;-40.5;218;114;rolling;demand mean -51%, demand variability -36% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001020;1000;P01;282;682;141.8;807;1958;rolling;demand variability +118%, demand mean +85%, supplier lead time +31% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001021;1000;P01;89;73;-18.0;211;145;empirical;demand mean -44%, demand variability -34% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001022;2000;P02;48;32;-33.3;98;81;empirical;lead-time variability +36% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001023;1000;P01;96;43;-55.2;201;117;empirical;demand variability -36%, lead-time variability -32%, demand mean -25% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001024;2000;P02;11;15;36.4;17;20;empirical;demand variability +24%, demand mean -17%, lead-time variability +11% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001025;1000;P01;48;37;-22.9;88;68;empirical;demand variability -21%, lead-time variability -20%, demand mean -13% vs. current setting;AUTO_UPDATE
-40001026;1000;P01;855;541;-36.7;2195;1563;rolling;demand mean -38%, supplier lead time +22%, demand variability +17% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001027;2000;P02;204;532;160.8;931;1845;rolling;demand variability +302%, demand mean +66%, lead-time variability +18% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001028;1000;P01;64;40;-37.5;211;128;rolling;demand mean -46%, supplier lead time +10% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001029;2000;P02;10;21;110.0;40;67;rolling;demand variability +205%, demand mean +51%, lead-time variability +17% vs. current setting;NEEDS_PLANNER_APPROVAL
-40001030;1000;P01;257;225;-12.5;1080;681;rolling;demand mean -42%, demand variability +31%, lead-time variability +22% vs. current setting;NEEDS_PLANNER_APPROVAL
+40001001;1000;P01;611;601;-1.6;1878;1836;rolling;Minor statistical update;NO_CHANGE
+40001002;2000;P02;393;450;14.5;1314;1427;rolling;lead-time variability +18% since last quarterly review;AUTO_UPDATE
+40001003;1000;P01;267;286;7.1;709;725;rolling;lead-time variability +15% since last quarterly review;AUTO_UPDATE
+40001004;2000;P02;144;134;-6.9;434;415;rolling;Minor statistical update;AUTO_UPDATE
+40001005;1000;P01;560;581;3.8;1571;1578;rolling;Minor statistical update;NO_CHANGE
+40001006;1000;P01;233;247;6.0;676;699;rolling;Minor statistical update;AUTO_UPDATE
+40001007;2000;P02;450;454;0.9;1249;1263;rolling;Minor statistical update;NO_CHANGE
+40001008;1000;P01;135;134;-0.7;449;447;rolling;Minor statistical update;NO_CHANGE
+40001009;2000;P02;675;665;-1.5;2207;2245;rolling;Minor statistical update;NO_CHANGE
+40001010;1000;P01;510;496;-2.7;1521;1441;rolling;Minor statistical update;AUTO_UPDATE
+40001011;1000;P01;160;149;-6.9;564;561;rolling;Minor statistical update;AUTO_UPDATE
+40001012;2000;P02;33;35;6.1;103;102;rolling;lead-time variability +12% since last quarterly review;AUTO_UPDATE
+40001013;1000;P01;189;175;-7.4;625;624;rolling;Minor statistical update;AUTO_UPDATE
+40001014;2000;P02;49;48;-2.0;188;184;rolling;Minor statistical update;NO_CHANGE
+40001015;1000;P01;206;203;-1.5;889;895;rolling;demand variability -12% since last quarterly review;NO_CHANGE
+40001016;1000;P01;123;130;5.7;419;435;rolling;Minor statistical update;AUTO_UPDATE
+40001017;2000;P02;37;36;-2.7;133;130;rolling;Minor statistical update;NO_CHANGE
+40001018;1000;P01;188;239;27.1;602;742;rolling;demand mean +24%, demand variability +15% since last quarterly review;AUTO_UPDATE
+40001019;2000;P02;61;44;-27.9;156;114;rolling;demand variability -30%, demand mean -26% since last quarterly review;AUTO_UPDATE
+40001020;1000;P01;560;682;21.8;1512;1958;rolling;demand mean +27%, demand variability +15% since last quarterly review;AUTO_UPDATE
+40001021;1000;P01;54;73;35.2;121;145;empirical;lead-time variability +12% since last quarterly review;NEEDS_PLANNER_APPROVAL
+40001022;2000;P02;46;32;-30.4;93;81;empirical;Minor statistical update;NEEDS_PLANNER_APPROVAL
+40001023;1000;P01;54;43;-20.4;116;117;empirical;demand mean +22% since last quarterly review;AUTO_UPDATE
+40001024;2000;P02;18;15;-16.7;26;20;empirical;demand mean -33%, demand variability -25% since last quarterly review;AUTO_UPDATE
+40001025;1000;P01;36;37;2.8;69;68;empirical;lead-time variability -12% since last quarterly review;NO_CHANGE
+40001026;1000;P01;779;746;-4.2;2170;2182;rolling;demand variability -12% since last quarterly review;NO_CHANGE
+40001027;2000;P02;290;330;13.8;1201;1281;rolling;lead-time variability +19% since last quarterly review;AUTO_UPDATE
+40001028;1000;P01;46;55;19.6;171;186;rolling;lead-time variability +27% since last quarterly review;AUTO_UPDATE
+40001029;2000;P02;12;13;8.3;43;45;rolling;lead-time variability +16% since last quarterly review;AUTO_UPDATE
+40001030;1000;P01;294;272;-7.5;944;902;rolling;Minor statistical update;AUTO_UPDATE

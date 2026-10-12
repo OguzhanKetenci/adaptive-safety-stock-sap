@@ -36,5 +36,14 @@ def test_non_negative_demand_and_regime_shift(ds):
         d = ds.demand[m]
         before, after = d[:data_gen.SHIFT_DAY], d[data_gen.SHIFT_DAY:]
         cv_before, cv_after = before.std() / before.mean(), after.std() / after.mean()
-        assert cv_after > 1.5 * cv_before                    # volatility regime changed
-        assert abs(after.mean() / before.mean() - 1) > 0.3   # mean regime changed
+        assert cv_after > 1.3 * cv_before                     # volatility regime changed (x1.5)
+        assert 0.07 < abs(after.mean() / before.mean() - 1) < 0.30   # mild level step (10-25 %)
+
+
+def test_trends_are_mild(ds):
+    """Growth / decline change the level by roughly 10-25 % over the horizon."""
+    for pat in ["growth", "decline"]:
+        for m in ds.meta.loc[ds.meta["pattern"] == pat, "MATNR"]:
+            d = ds.demand[m]
+            ratio = d[-90:].mean() / d[:90].mean()
+            assert 0.70 < ratio < 1.35

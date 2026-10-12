@@ -1,6 +1,7 @@
 # Adaptive Safety Stock for SAP MM
 
-**A planner-controlled way to keep `MARC-EISBE` up to date, with the numbers to show why it matters.**
+**What does weekly, automatic safety stock recalculation add on top of a disciplined quarterly
+planner review? An honest simulation, with SAP field names and an approval workflow.**
 
 ![Overview page](docs/img/overview.jpg)
 
@@ -8,22 +9,20 @@
 
 ## The problem
 
-In most SAP MM systems the safety stock (`MARC-EISBE`) and, for reorder-point items, the reorder
-point (`MARC-MINBE`) are set when the material is created. After that, almost nobody touches them.
-Demand does not stand still, though. A product line grows, a customer leaves, a supplier gets
-less reliable, or the market simply becomes more volatile. A safety stock that was right a year ago
-quietly turns into one of two problems:
+In SAP MM, the safety stock (`MARC-EISBE`) and, for reorder-point items, the reorder point
+(`MARC-MINBE`) are maintained by planners. In a well-run team they are reviewed about once a
+quarter. In many teams they are reviewed far less often.
 
-* **Too low** for materials whose demand grew or became more volatile. The result is stockouts,
-  expediting, and production stops.
-* **Too high** for materials whose demand declined. The result is capital tied up in stock nobody needs.
+Between reviews, demand keeps moving. Products slowly grow or decline, a customer changes its
+order pattern, seasons come and go, and suppliers become more or less reliable. A quarterly value
+is always a little behind. The question this project asks is deliberately modest:
 
-Planners rarely have time to review hundreds of materials by hand, so the static value survives.
+> If a background job recalculated EISBE every week from data SAP already holds, how much better
+> would we do than a planner who refreshes it every quarter?
 
 ## The approach
 
-This project simulates what happens when a scheduled job **recalculates the safety stock every
-week** from data that SAP already holds:
+The weekly job uses only data that SAP already holds:
 
 1. **Demand** is read from consumption history (goods issues in MSEG, monthly totals in MVER).
 2. **Real supplier lead times** come from purchasing history: PO date (`EKKO-BEDAT`) to goods receipt
@@ -37,64 +36,84 @@ week** from data that SAP already holds:
    * EWMA is also simulated as an alternative.
 5. **Planner control** decides what gets posted. Changes under 5% are ignored, so the master data
    does not flicker. Changes up to ±30% are posted automatically through an MM17/LSMW file. Anything
-   larger goes to the responsible MRP controller for approval, together with a plain-language
-   reason, for example *"demand mean +93%, demand variability +86% vs. current setting"*.
+   larger goes to the responsible MRP controller for approval, with a plain-language reason.
 
-To test this, 30 materials are simulated over 540 days (18 months) with a daily reorder-point
-(s, Q) policy. The simulation includes stochastic lead times and either lost sales or backorders.
-Every method sees exactly the same demand and the same supplier delays, so any difference in the
-results comes from the safety stock logic alone.
+**The baseline is a fair one.** The planner uses the same formula and the same 90-day window, but
+recalculates only every 90 days. A setting that is never updated is also simulated, but only as a
+secondary reference. Comparing against neglected master data would make any method look good.
+
+**The scenario is realistic:**
+
+* 30 materials, 540 days (18 months), daily reorder-point (s, Q) policy, stochastic lead times.
+* Demand changes are mild: trends of ±10–25% over the whole horizon, and level shifts of ±10–25%
+  combined with a 1.5× jump in volatility. Seasonal items swing ±30–50% over the year.
+* Stockout cost is 1.5 × the unit margin, with a 25% margin assumed. That is 37.5% of the unit
+  value. Holding cost is 20% per year, and each order costs €50.
+* Every method sees exactly the same demand and the same supplier delays, so any difference in the
+  results comes from the safety stock logic alone.
+
+No parameter was tuned to reach a particular result. The cost assumptions were fixed before the
+simulation was run.
 
 ## Results
 
-**Over the 16-month evaluation period, the adaptive approach cuts total cost by 59%
-(from about €827k to €339k).** It raises the fill rate from 90.7% to 98.3% and needs only about 5%
-more average inventory value. Total cost here means holding, stockout and ordering cost combined.
+**Weekly recalculation lowers total cost by 9.4% compared with a quarterly refresh**, from about
+€292k to €264k over the 16-month evaluation period. Fill rate rises slightly, from 98.1% to
+98.6%, and average inventory value is about 1% lower. Most of the saving comes from avoided
+stockouts. Holding and ordering costs barely move.
 
-The headline compares the static setting with a method mix that was **fixed before the
-simulation**: rolling window for regular items, empirical percentile for intermittent items.
-EWMA did slightly better in this data set, but choosing it afterwards would be hindsight, so it is
-reported and not used for the headline.
+That is more than the few percent people usually expect, so it is worth being precise about
+where it comes from:
 
-The benefit is not spread evenly, and the details are the useful part:
+* **Seasonal materials account for almost all of it** (about €26k of the €27k). A quarterly
+  refresh always looks at the last 90 days, so it sets the safety stock for the season that has
+  just ended. It is too low going into the peak and too high coming out of it. The clearest case is
+  the PCB control board (AY): same average inventory, but its stockout cost falls from about €17k to
+  €2k because the weekly job raises the safety stock *as* demand climbs. The drill-down chart below
+  shows this.
+* **Without the seasonal items, the saving is about 0.5%.** Growth, decline and regime-shift
+  materials are essentially break-even. A quarterly review already catches mild trends and one-off
+  level shifts well enough.
+* **Intermittent materials improve by about 11%.** This is partly the weekly cycle and partly the
+  empirical percentile method, which suits lumpy demand better than the normal formula. If every
+  item used the same formula weekly, the overall saving would be 8.8% instead of 9.4%.
+* **Stable materials get slightly worse (+2.5% cost).** With nothing to adapt to, weekly
+  recalculation mostly adds estimation noise. The deep groove ball bearing (AY) is the biggest
+  loser, at about €5k worse. This is exactly why the export has a dead band and an approval step.
 
-* **Growth and regime-shift materials account for almost all of the savings.** Under the static
-  setting these items run out again and again, because their safety stock was sized for the demand of
-  the first two months. The adaptive job sees the trend within a few weeks and raises EISBE and MINBE.
-* **Declining materials** move the other way. Adaptive cuts their average inventory by about a third,
-  at nearly the same service level.
-* **Seasonal materials** benefit too, because the safety stock follows the yearly cycle. It does so
-  with a lag, so a forecast-based method would do better here.
-* **Stable and intermittent materials see no benefit, and sometimes a small loss.** With nothing to
-  adapt to, recalculation mostly adds estimation noise. Adaptive is cheaper for 17 of the 30
-  materials, not all of them. This is exactly why the export has a dead band and an approval step:
-  the goal is to catch real changes in demand, not to chase noise.
+Adaptive is cheaper for 20 of the 30 materials, not all of them. Its total-cost advantage depends on
+the stockout cost assumption: 7.1% at 1× margin and 11.1% at 2× margin. In every case, more than 90%
+of it comes from seasonal items. With a 60-day window it falls to 5%, with a 180-day window to 2%,
+and with monthly instead of weekly reviews to 7%.
 
-The result does not hinge on one cost assumption. The headline values a lost unit at 50% of its
-price. Even if a stockout cost only 5% of the unit value, adaptive would still be 17% cheaper. In
-backorder mode the saving rises to about 72%. Changing the window length (60–180 days) or the
-review frequency (daily to monthly) moves the saving only between 53% and 59%.
+**What this means in practice:** an automatic weekly job pays off where demand changes *within* a
+quarter, which mainly means seasonal items. For the rest of the portfolio it mainly saves planner
+time rather than money. A forecast-based safety stock would probably do better still on seasonal
+items, because it would anticipate the season instead of following it.
 
-| Drill-down: inventory per method | Step-by-step replay |
+*Reference:* a never-updated safety stock would cost about €320k with a 96.9% fill rate, about
+10% more than the quarterly refresh. It is not used for the headline.
+
+| Drill-down: safety stock follows the season (seasonal material) | Step-by-step replay |
 |---|---|
 | ![Drill-down](docs/img/drilldown.jpg) | ![Replay](docs/img/replay.jpg) |
 
-> 🎬 *GIF placeholder: a short recording of the replay mode (Play at 1 day/s through the regime shift
-> on day 180) would go here: `docs/img/replay.gif`.*
+> 🎬 *GIF placeholder: a short recording of the replay mode (Play at 1 day/s) would go here:
+> `docs/img/replay.gif`.*
 
 ## The app
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Headline savings, cost by method, the ABC × XYZ segment matrix with savings per cell, results by demand pattern, top materials by impact (including where adaptive does worse) |
-| **Material drill-down** | Demand, on-hand inventory per method, safety stock over time, and KPIs for one material |
+| **Overview** | Headline result vs. the quarterly refresh, cost by method, the ABC × XYZ segment matrix with savings per cell, results by demand pattern, top materials by impact (including where adaptive does worse) |
+| **Material drill-down** | Demand, on-hand inventory per method (quarterly vs. adaptive by default), safety stock over time, and KPIs for one material |
 | **Step-by-step replay** | Day-by-day playback with ▶ Play / ⏸ Pause / ⏭ Next day / ⏮ Reset and a speed control (default slow: 1 day per second). Shows receipts, issues, POs placed and EISBE recalculations as they happen |
 | **SAP export** | Proposed EISBE/MINBE changes with reason and status. Planners can approve or reject the large changes in the table, then download the proposal list and the MM17 upload file |
-| **About & SAP fields** | Tables and fields used, plus the current MARC settings |
+| **About & SAP fields** | Tables and fields used, plus the MARC settings at go-live |
 
 The sidebar holds all the parameters: service-level overrides per segment (an editable 3×3
 matrix), window length, review frequency, EWMA α, lost sales vs. backorder, holding cost %,
-stockout cost and ordering cost.
+unit margin, stockout cost as a multiple of margin, and ordering cost.
 
 ### Run it
 
@@ -163,6 +182,11 @@ DECISIONS.md      every modelling choice and why
 * **No forecast.** All methods look backwards. Seasonal items would benefit from forecast-based
   safety stock (SAP forecast models or IBP).
 * **Segmentation is fixed** from the baseline period and is not re-run over time.
+* **The result depends on the portfolio mix.** 5 of the 30 materials are seasonal (±30–50%
+  swing), and they drive the saving. A portfolio with fewer or milder seasonal items should expect
+  close to break-even.
+* **The quarterly planner is idealised.** The simulated planner always refreshes on time and uses
+  the same formula. Real reviews slip, which would make the weekly job look somewhat better.
 
 ## Author's note
 

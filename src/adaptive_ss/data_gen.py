@@ -99,11 +99,11 @@ def _demand_series(pattern: str, i: int, n_days: int) -> tuple[np.ndarray, dict]
     mu = np.full(n_days, base)
     sigma_mult = np.ones(n_days)
     if pattern == "growth":
-        g = r.uniform(1.0, 1.5)
+        g = r.uniform(0.10, 0.25)            # +10-25 % over 18 months
         mu = base * (1 + g * t / n_days)
         info["growth_total"] = g
     elif pattern == "decline":
-        d = r.uniform(0.5, 0.65)
+        d = r.uniform(0.10, 0.25)            # -10-25 % over 18 months
         mu = base * (1 - d * t / n_days)
         info["decline_total"] = d
     elif pattern == "seasonal":
@@ -116,11 +116,13 @@ def _demand_series(pattern: str, i: int, n_days: int) -> tuple[np.ndarray, dict]
     elif pattern == "regime_shift":
         cv = r.uniform(0.15, 0.35)   # calm before the shift so the volatility jump is visible
         info["cv_true"] = cv
-        factor = 1.6 if i % 2 == 0 else 0.6
+        # level step of +10-25 % (even i) or -10-25 % (odd i), volatility x1.5
+        step = r.uniform(0.10, 0.25)
+        factor = 1 + step if i % 2 == 0 else 1 - step
         after = t >= SHIFT_DAY
         mu = np.where(after, base * factor, base)
-        sigma_mult = np.where(after, 2.2, 1.0)
-        info.update(shift_mean_factor=factor, shift_cv_factor=2.2, shift_day=SHIFT_DAY)
+        sigma_mult = np.where(after, 1.5, 1.0)
+        info.update(shift_mean_factor=factor, shift_cv_factor=1.5, shift_day=SHIFT_DAY)
 
     noise = r.normal(0.0, 1.0, n_days)
     qty = np.maximum(0, np.round(mu + noise * mu * cv * sigma_mult))

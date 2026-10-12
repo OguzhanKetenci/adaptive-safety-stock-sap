@@ -23,14 +23,15 @@ st.set_page_config(page_title="Adaptive Safety Stock for SAP", page_icon="📦",
 # Fixed colour per method (entity), never by rank. Validated reference palette.
 COLORS = {
     "adaptive": "#2a78d6",
-    "static": "#eb6834",
+    "quarterly": "#eb6834",
+    "static": "#eda100",
     "rolling": "#1baf7a",
     "ewma": "#4a3aa7",
     "empirical": "#e87ba4",
     "demand": "#9a9893",
 }
 LABEL = methods.METHOD_LABELS
-ALL_METHODS = ["static", "rolling", "ewma", "empirical", "adaptive"]
+ALL_METHODS = ["quarterly", "adaptive", "rolling", "ewma", "empirical", "static"]
 PAGES = ["Overview", "Material drill-down", "Step-by-step replay", "SAP export", "About & SAP fields"]
 SPEEDS = {"0.5 day/s": 0.5, "1 day/s (slow)": 1.0, "2 days/s": 2.0, "5 days/s": 5.0,
           "10 days/s": 10.0, "30 days/s": 30.0}
@@ -53,7 +54,7 @@ def dataset_with_targets(sl_matrix: tuple) -> data_gen.Dataset:
     return dataclasses.replace(ds, meta=meta)
 
 
-@st.cache_resource(show_spinner="Simulating 30 materials x 4 methods ...", max_entries=8)
+@st.cache_resource(show_spinner="Simulating 30 materials x 5 methods ...", max_entries=8)
 def run_simulation(cfg: simulation.SimConfig, sl_matrix: tuple):
     ds = dataset_with_targets(sl_matrix)
     return simulation.run_all(ds, cfg)
@@ -103,12 +104,15 @@ def sidebar():
 
     with st.sidebar.expander("Cost parameters", expanded=True):
         hold = st.slider("Holding cost (% of unit value / year)", 5, 40, 20) / 100
-        so = st.slider("Stockout cost per unit (% of unit value)", 10, 200, 50, step=10) / 100
+        margin = st.slider("Unit margin (% of unit value)", 5, 60, 25) / 100
+        multiple = st.slider("Stockout cost (× unit margin)", 0.5, 3.0, 1.5, step=0.25,
+                             help="Lost margin plus goodwill/expediting. 1–2× margin is typical.")
         order = st.number_input("Ordering cost per PO (€)", 0.0, 1000.0, 50.0, step=10.0)
+        st.caption(f"→ stockout cost = {margin * multiple:.1%} of unit value")
 
     cfg = simulation.SimConfig(window=window, review_every=review, ewma_alpha=alpha,
                                lost_sales=lost)
-    return page, cfg, sl_matrix, costs.CostParams(hold, so, order)
+    return page, cfg, sl_matrix, costs.CostParams(hold, margin, multiple, order)
 
 
 # ---------------------------------------------------------------------------
@@ -167,36 +171,53 @@ def page_overview(cfg, sl_matrix, cp):
     kpis = get_kpis(cfg, sl_matrix, cp)
     h = costs.headline(kpis)
     summ = costs.summary_by_method(kpis)
+    imp = costs.impact_by_material(kpis).join(ds.meta.set_index("MATNR")[["ABC", "XYZ", "service_level"]])
 
-    st.title("Adaptive safety stock vs. static SAP settings")
+    st.title("Adaptive safety stock vs. a quarterly planner refresh")
     st.markdown(
-        "In many SAP systems the safety stock **MARC-EISBE** is set once and then left alone. "
-        "This demo replays 18 months of daily demand for 30 materials and compares the static "
-        "setting with safety stocks that are **recalculated every "
-        f"{cfg.review_every} days** from recent consumption and actual supplier lead times. "
-        f"The KPIs exclude the first {cfg.warmup} warm-up days.")
+        "A well-run planning team reviews safety stock (**MARC-EISBE**) about once a quarter. "
+        "This demo replays 18 months of daily demand for 30 materials and asks a modest question: "
+        "what does it add to **recalculate every "
+        f"{cfg.review_every} days** from recent consumption and actual supplier lead times, instead "
+        f"of every {cfg.baseline_refresh} days? The KPIs exclude the first {cfg.warmup} warm-up days.")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total cost – static", eur(h["static_cost"]))
-    c2.metric("Total cost – adaptive", eur(h["adaptive_cost"]),
-              f"{-h['savings_pct']:.0%} vs static", delta_color="inverse")
-    c3.metric("Fill rate", f"{h['adaptive_fill']:.1%}",
-              f"{(h['adaptive_fill'] - h['static_fill']) * 100:+.1f} pp vs static")
-    c4.metric("Avg. inventory value", eur(h["adaptive_inv"]),
-              f"{h['adaptive_inv'] / h['static_inv'] - 1:+.0%} vs static", delta_color="inverse")
+    c1.metric("Cost – quarterly", eur(h["baseline_cost"]))
+    c2.metric("Cost – adaptive", eur(h["adaptive_cost"]),
+              f"{-h['savings_pct']:+.1%}", delta_color="inverse")
+    c3.metric("Fill rate (adaptive)", f"{h['adaptive_fill']:.1%}",
+              f"{(h['adaptive_fill'] - h['baseline_fill']) * 100:+.1f} pp")
+    c4.metric("Inventory value (adaptive)", eur(h["adaptive_inv"]),
+              f"{h['adaptive_inv'] / h['baseline_inv'] - 1:+.1%}", delta_color="inverse")
 
-    verdict = "saves" if h["savings"] > 0 else "costs an extra"
-    st.info(
-        f"**Headline:** the adaptive approach {verdict} **{eur(abs(h['savings']))}** "
-        f"({abs(h['savings_pct']):.0%} of total cost) over the evaluation period. It raises fill "
-        f"rate from {h['static_fill']:.1%} to {h['adaptive_fill']:.1%} while average inventory "
-        f"value changes by {h['adaptive_inv'] / h['static_inv'] - 1:+.0%}. In other words, the stock is "
-        "moved to the materials whose demand has actually changed.")
+    # What drives the result: savings by demand pattern (computed, not hard-coded)
+    by_pat_sav = imp.groupby("pattern")["savings"].sum().sort_values(ascending=False)
+    top_pat = by_pat_sav.index[0]
+    top_share = by_pat_sav.iloc[0] / h["savings"] if h["savings"] > 0 else np.nan
+    rest = h["savings"] - by_pat_sav.iloc[0]
+    rest_base = imp.loc[imp["pattern"] != top_pat, "baseline"].sum()
+    n_better = int((imp["savings"] > 0).sum())
+
+    verdict = "lowers" if h["savings"] > 0 else "raises"
+    text = (
+        f"**Headline:** weekly recalculation {verdict} total cost by **{abs(h['savings_pct']):.1%}** "
+        f"({eur(abs(h['savings']))}) compared with a quarterly refresh. Fill rate moves from "
+        f"{h['baseline_fill']:.1%} to {h['adaptive_fill']:.1%}, and average inventory value changes by "
+        f"{h['adaptive_inv'] / h['baseline_inv'] - 1:+.1%}. Adaptive is cheaper for {n_better} of "
+        f"{len(imp)} materials.")
+    if h["savings"] > 0 and top_share > 0.5:
+        text += (f" Most of the gain ({top_share:.0%}) comes from **{top_pat.replace('_', ' ')}** "
+                 f"materials. Without them, total cost changes by {-rest / rest_base:+.1%}, "
+                 "which is close to break-even.")
+    st.info(text)
+    st.caption(f"Reference only: a setting that is never updated would cost {eur(h['static_cost'])} "
+               f"with a fill rate of {h['static_fill']:.1%}. It is not used for the headline, because "
+               "comparing against neglected master data overstates the benefit.")
 
     left, right = st.columns([1.15, 1])
     with left:
         st.subheader("Cost by method")
-        order = ["static", "rolling", "ewma", "empirical", "adaptive"]
+        order = ["quarterly", "adaptive", "rolling", "ewma", "empirical", "static"]
         fig = go.Figure()
         for comp, color in [("holding_cost", "#2a78d6"), ("stockout_cost", "#eb6834"),
                             ("ordering_cost", "#9a9893")]:
@@ -204,7 +225,7 @@ def page_overview(cfg, sl_matrix, cp):
                         name=comp.replace("_", " ").capitalize(), marker_color=color,
                         marker_line_color="rgba(0,0,0,0)",
                         hovertemplate="%{y}<br>%{x:,.0f} €<extra>" + comp.split("_")[0] + "</extra>")
-        fig.update_layout(barmode="stack", height=340, margin=dict(l=10, r=10, t=30, b=10),
+        fig.update_layout(barmode="stack", height=360, margin=dict(l=10, r=10, t=30, b=10),
                           legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
                           xaxis_title="€ over evaluation period",
                           bargap=0.35)
@@ -218,8 +239,8 @@ def page_overview(cfg, sl_matrix, cp):
                      use_container_width=True)
     with right:
         st.subheader("Segment matrix (ABC × XYZ)")
-        st.caption("Number of materials, target service level, and savings of adaptive vs static.")
-        imp = costs.impact_by_material(kpis).join(ds.meta.set_index("MATNR")[["ABC", "XYZ", "service_level"]])
+        st.caption("Number of materials, target service level, and cost difference of adaptive vs "
+                   "quarterly refresh.")
         z, text = [], []
         for a in "ABC":
             zr, tr = [], []
@@ -242,15 +263,16 @@ def page_overview(cfg, sl_matrix, cp):
         fig.update_yaxes(autorange="reversed")
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Blue = adaptive cheaper, red = adaptive more expensive. "
-                   "“−€” is a cost reduction.")
+                   "“−€” is a cost reduction, “+€” a cost increase.")
 
     st.subheader("Where the difference comes from")
     c1, c2 = st.columns(2)
     by_pat = kpis.pivot_table(index="pattern", columns="method", values="total_cost", aggfunc="sum")
-    by_pat = by_pat[["static", "adaptive"]].sort_values("static", ascending=False)
+    by_pat = by_pat[["quarterly", "adaptive"]]
+    by_pat = by_pat.loc[(by_pat["quarterly"] - by_pat["adaptive"]).sort_values(ascending=False).index]
     with c1:
         fig = go.Figure()
-        for m in ["static", "adaptive"]:
+        for m in ["quarterly", "adaptive"]:
             fig.add_bar(x=by_pat.index.str.replace("_", " "), y=by_pat[m], name=LABEL[m],
                         marker_color=COLORS[m], hovertemplate="%{x}: %{y:,.0f} €<extra>" + LABEL[m] + "</extra>")
         fig.update_layout(barmode="group", height=330, margin=dict(l=10, r=10, t=30, b=10),
@@ -259,18 +281,23 @@ def page_overview(cfg, sl_matrix, cp):
                           yaxis_title="€", bargap=0.3, bargroupgap=0.08)
         st.plotly_chart(fig, use_container_width=True)
     with c2:
+        lines = []
+        for pat, sav in by_pat_sav.items():
+            base = imp.loc[imp["pattern"] == pat, "baseline"].sum()
+            lines.append(f"- **{pat.replace('_', ' ').capitalize()}:** {-sav / base:+.1%} "
+                         f"({'−' if sav > 0 else '+'}{eur(abs(sav))})")
+        st.markdown("Cost change of adaptive vs. quarterly refresh, by demand pattern:\n\n" + "\n".join(lines))
         st.markdown(
-            "- **Growth and regime-shift** items drive the savings. The static safety stock is sized for "
-            "demand that no longer exists, so stockouts pile up.\n"
-            "- **Declining** items carry too much stock under the static setting, and adaptive releases it.\n"
-            "- **Stable and intermittent** items show little benefit and can even get worse, because "
-            "recalculating adds estimation noise. That is why the export has a dead band and a "
-            "planner-approval step instead of posting every change.")
+            "A quarterly refresh already keeps up with slow trends and one-off level shifts. Weekly "
+            "recalculation adds most where demand moves **within** a quarter. Seasonal items are the "
+            "clearest case: a quarterly value is always sized for the season that just ended. On "
+            "stable items, weekly recalculation mostly adds estimation noise. That is why the export "
+            "has a dead band and a planner-approval step.")
 
     st.subheader("Top materials by impact")
-    imp_show = imp.join(ds.mara.set_index("MATNR")["MAKTX"])
-    cols = ["MAKTX", "WERKS", "pattern", "segment", "static", "adaptive", "savings"]
-    fmt = {"static": "€{:,.0f}", "adaptive": "€{:,.0f}", "savings": "€{:,.0f}"}
+    imp_show = imp.join(ds.mara.set_index("MATNR")["MAKTX"]).rename(columns={"baseline": "quarterly"})
+    cols = ["MAKTX", "WERKS", "pattern", "segment", "quarterly", "adaptive", "savings"]
+    fmt = {"quarterly": "€{:,.0f}", "adaptive": "€{:,.0f}", "savings": "€{:,.0f}"}
     t1, t2 = st.tabs(["Largest savings", "Where adaptive costs more"])
     t1.dataframe(imp_show[cols].head(10).style.format(fmt), use_container_width=True)
     t2.dataframe(imp_show[cols].sort_values("savings").head(5).style.format(fmt),
@@ -293,15 +320,15 @@ def page_drilldown(cfg, sl_matrix, cp):
     st.title("Material drill-down")
     c1, c2 = st.columns([2, 3])
     with c1:
-        matnr = _material_picker("drill_mat")
+        matnr = _material_picker("drill_mat", default_pattern="seasonal")
     row = ds.meta.set_index("MATNR").loc[matnr]
     with c2:
-        meths = st.multiselect("Methods", ALL_METHODS, default=["static", "adaptive"],
+        meths = st.multiselect("Methods", ALL_METHODS, default=["quarterly", "adaptive"],
                                format_func=LABEL.get, key="drill_methods")
     marc = ds.marc.set_index("MATNR").loc[matnr]
     st.caption(f"Plant {row.WERKS} · segment {row.segment} · target service level "
                f"{row.service_level:.0%} · unit value €{row.price:,.2f} · PLIFZ {row.PLIFZ} d "
-               f"(actual ≈ {row.lt_mean_true:.1f} d) · current MARC: EISBE {marc.EISBE}, "
+               f"(actual ≈ {row.lt_mean_true:.1f} d) · MARC at go-live: EISBE {marc.EISBE}, "
                f"MINBE {marc.MINBE}, BSTFE {marc.BSTFE} · adaptive method: {LABEL[row.adaptive_method]}")
     if not meths:
         st.warning("Select at least one method.")
@@ -364,7 +391,7 @@ def page_replay(cfg, sl_matrix, cp):
             ss_.playing = False
 
     interval = 1.0 / SPEEDS[speed_label]
-    meths = ["static", "adaptive"]
+    meths = ["quarterly", "adaptive"]
 
     @st.fragment(run_every=interval if ss_.playing else None)
     def board():
@@ -416,7 +443,10 @@ def page_replay(cfg, sl_matrix, cp):
         _markers(fig, cfg, row.pattern)
         fig.add_vline(x=t, line_color="#52514e", line_width=1)
         fig.update_xaxes(range=x_range)
-        st.plotly_chart(_layout(fig, "Inventory and reorder point (last 120 days)", "Units", 360),
+        _layout(fig, "Inventory and reorder point (last 120 days)", "Units", 400)
+        fig.update_layout(legend=dict(orientation="h", y=-0.22, yanchor="top", x=0, xanchor="left"),
+                          margin=dict(b=40))
+        st.plotly_chart(fig,
                         use_container_width=True, key=f"replay_inv_{t}")
         dem = series(results, matnr, "static")["demand"].iloc[:t + 1]
         st.plotly_chart(demand_chart(dem, cfg, row.pattern, x_range),
@@ -431,7 +461,7 @@ def page_export(cfg, sl_matrix, cp):
     st.title("SAP export – proposed EISBE changes")
     st.markdown(
         "This is what the weekly background job would propose today, compared with the values "
-        "currently in MARC. Changes under **5 %** are ignored (dead band). Changes up to **±30 %** are "
+        "currently in MARC, i.e. the values the planner set at the last quarterly review. Changes under **5 %** are ignored (dead band). Changes up to **±30 %** are "
         "posted automatically via MM17/LSMW. Anything larger goes to the responsible MRP "
         "controller (DISPO) as **needs planner approval**.")
     prop = sap_export.build_proposals(ds, cfg).merge(ds.mara[["MATNR", "MAKTX"]], on="MATNR")
@@ -440,8 +470,8 @@ def page_export(cfg, sl_matrix, cp):
     c1.metric("Auto-update", int(counts.get(sap_export.STATUS_AUTO, 0)))
     c2.metric("Needs planner approval", int(counts.get(sap_export.STATUS_APPROVAL, 0)))
     c3.metric("No change (dead band)", int(counts.get(sap_export.STATUS_NO_CHANGE, 0)))
-    st.caption("Note: this is the *first* run after 16 months of static settings, so many items need "
-               "approval. In normal weekly operation the changes are small and mostly automatic.")
+    st.caption("Because MARC was refreshed at most 90 days ago, most changes are small and fall into "
+               "the dead band or the auto-update band. Only real shifts reach the planner.")
 
     st.subheader("Planner approval")
     st.caption("Approve or reject the large changes. Approved rows are added to the MM17 upload file.")
@@ -477,9 +507,10 @@ def page_export(cfg, sl_matrix, cp):
 def page_about():
     st.title("About this demo")
     st.markdown("""
-**Problem.** The safety stock in SAP MM (`MARC-EISBE`) is usually set once and then forgotten.
-When demand grows, shrinks or becomes more volatile, a static value leads either to stockouts or
-to excess inventory.
+**Problem.** The safety stock in SAP MM (`MARC-EISBE`) is typically reviewed by planners at fixed
+intervals, at best quarterly. Between reviews, demand keeps moving: trends, level shifts,
+seasons. The question is how much a weekly, automatic recalculation adds on top of a disciplined
+quarterly refresh.
 
 **Approach.** A scheduled job recalculates the safety stock from recent consumption and from actual
 supplier lead times (PO date to goods receipt). The target service level comes from the ABC × XYZ
@@ -494,15 +525,16 @@ segment. Small changes are posted automatically; large ones go to the MRP contro
 | MSEG / MVER | goods issues (daily), GSVBR (monthly) | demand mean and variability |
 | EKKO / EKPO / EKBE | BEDAT, MATNR, WERKS, BUDAT (GR, BWART 101) | actual lead time and its variability |
 
-**Methods compared:** static (SAP as-is), rolling window, EWMA, and empirical percentile (for
-intermittent demand). The "adaptive" result uses the rolling window for regular items and the
+**Methods compared:** quarterly refresh (the baseline: the same formula, recalculated every 90
+days), rolling window, EWMA and empirical percentile (for intermittent demand), all recalculated
+weekly. A never-updated setting is shown as a secondary reference only. The "adaptive" result uses the rolling window for regular items and the
 empirical percentile for intermittent items. This choice is made before the simulation.
 
 **Limitations:** synthetic data, single echelon, no capacity or MOQ constraints, consumption equals
 demand (no censoring), no forecast-based planning.
 """)
     ds = get_base_data()
-    t1, t2, t3 = st.tabs(["MARC (current)", "MARA", "EKKO (first rows)"])
+    t1, t2, t3 = st.tabs(["MARC (at go-live)", "MARA", "EKKO (first rows)"])
     t1.dataframe(ds.marc, hide_index=True, use_container_width=True)
     t2.dataframe(ds.mara, hide_index=True, use_container_width=True)
     t3.dataframe(ds.ekko.head(20), hide_index=True, use_container_width=True)

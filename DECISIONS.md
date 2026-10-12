@@ -14,7 +14,7 @@ Grouped by topic; each line is a choice someone could reasonably have made diffe
 | D5 | Actual lead time = `EKBE.BUDAT` (goods receipt, BWART 101) − `EKKO.BEDAT` (PO date). PO history starts 150 days before go-live. | This is how a planner would measure supplier lead time in SAP. The pre-history means lead-time statistics already exist on day 0. |
 | D6 | Actual supplier lead times average 95–125% of the planned `PLIFZ` and are gamma distributed. | In practice PLIFZ is rarely maintained and suppliers tend to deliver late. This shows why lead times should be measured, not read from master data. |
 | D7 | Simulated orders take their lead times from a separate, pre-drawn sequence per material, with the same distribution as the PO history. Every method uses the same sequence. | Common random numbers: the methods differ only in their logic, not their luck. Lead-time *statistics* still come from the EKKO/EKBE receipt history, which methods only see once the receipt has been posted. |
-| D8 | Regime-shift materials start with low volatility (CV 0.15–0.35). On day 180 the mean moves ×1.6 or ×0.6 and the volatility ×2.2. | With a high starting CV, clipping demand at zero hid the volatility jump on the "down" materials. |
+| D8 | Regime-shift materials start with low volatility (CV 0.15–0.35). On day 180 the level moves by **+10–25% or −10–25%**, and volatility rises ×1.5. *(Revised: originally ×1.6 / ×0.6 and ×2.2.)* | Real level shifts are usually modest. The first version's ±40–60% steps flattered the adaptive method. A low starting CV keeps the volatility change visible. |
 | D9 | Synthetic demand = consumption. | In real SAP, consumption under-reports demand during stockouts (censored demand). This is listed as a limitation. |
 
 ## Segmentation & service levels
@@ -30,8 +30,8 @@ Grouped by topic; each line is a choice someone could reasonably have made diffe
 
 | # | Decision | Why |
 |---|----------|-----|
-| M1 | **Static** = formula SS from days 0–59, written to MARC (EISBE, MINBE, BSTFE) and never changed. | This is the "set once" SAP practice the project challenges. |
-| M2 | During the 60-day warm-up **all methods use the static settings**. Adaptive methods start recalculating on day 60. | Every method enters the KPI period in exactly the same state, which makes the comparison clean. |
+| M1 | **Baseline = quarterly refresh:** the same formula and the same 90-day window, recalculated by the planner every 90 days (days 60, 150, 240, …). **Never updated** = formula SS from days 0–59, written to MARC and never changed. It is kept as a secondary reference only. *(Revised: the never-updated setting used to be the headline baseline.)* | Comparing against neglected master data overstates the benefit. A disciplined quarterly review is the fair benchmark for an automatic weekly job. |
+| M2 | During the 60-day warm-up **all methods use the go-live settings**. Recalculation starts on day 60. | Every method enters the KPI period in exactly the same state, which makes the comparison clean. |
 | M3 | Adaptive recalculation every **7 days** by default, using a 90-day demand window and the receipts of the last 180 days (at least 3 receipts). | Weekly is a realistic background-job cadence. Window and frequency are sidebar parameters. |
 | M4 | EWMA uses exponential weights (1 − α)^age with α = 0.05 for demand and α = 0.2 for lead times. Its mean and variance are both weighted. | Same effect as recursive EWMA, written in vectorised form (it is called thousands of times). |
 | M5 | Empirical method: the service-level percentile of all observed lead-time-demand sums. Every observed lead time is combined with every start day in the last max(window, 180) days. ROP = that percentile, SS = ROP − expected LTD. | This bootstrap is deterministic and needs no normal assumption, which suits lumpy demand. It falls back to the formula when there are fewer than 10 samples. |
@@ -46,7 +46,7 @@ Grouped by topic; each line is a choice someone could reasonably have made diffe
 | # | Decision | Why |
 |---|----------|-----|
 | C1 | Holding cost 20% of unit value per year. Ordering cost €50 per PO. | Typical planning assumptions. |
-| C2 | Stockout cost per unit = **50% of unit value** (a factor, not a flat € amount). | Prices range from about €2 to €1,000. A flat penalty per unit would make stockouts on cheap parts dominate and those on expensive parts look free. |
+| C2 | Stockout cost per unit = **1.5 × unit margin**, with a 25% margin assumed, i.e. **37.5% of unit value**. Both values are sidebar parameters. *(Revised: originally 50% of unit value.)* | 1–2× margin is a common rule of thumb (lost margin plus expediting and goodwill). I chose the midpoint before running the simulation and did not adjust it afterwards. It is expressed relative to value because prices range from about €2 to €1,000. |
 | C3 | In backorder mode each backordered unit is charged once. | Keeps lost-sales and backorder costs comparable. |
 
 ## SAP export & approval
@@ -57,7 +57,7 @@ Grouped by topic; each line is a choice someone could reasonably have made diffe
 | E2 | Status logic: change under 5% → `NO_CHANGE` (dead band); up to ±30% → `AUTO_UPDATE`; above ±30% → `NEEDS_PLANNER_APPROVAL`. | The dead band stops the master data from changing back and forth every week. The ±30% gate keeps a human in charge of big moves. |
 | E3 | The status takes the **larger of the EISBE and MINBE changes**. | With DISMM = VB, MRP is triggered by the reorder point MINBE. A big MINBE move should not be auto-posted just because EISBE barely changed. |
 | E4 | Two files: the full proposal list for planners (with reason and MRP controller DISPO), and an MM17 upload file with only the AUTO_UPDATE rows (MATNR;WERKS;EISBE;MINBE). | This separates "inform" from "post". |
-| E5 | The proposal shown is what the job would propose at the end of the horizon, compared with today's MARC values. | This is the first run after 16 months of static settings, so most items need approval. In normal weekly operation the changes would be small and incremental. |
+| E5 | The proposal compares what the weekly job would propose at the end of the horizon with **the MARC values set at the last quarterly review (day 510)**. *(Revised: it used to compare with the go-live values.)* | This matches the baseline process. Because MARC is at most 90 days old, most changes fall into the dead band or the auto band, and only real shifts reach the planner. |
 
 ## App
 
@@ -66,7 +66,7 @@ Grouped by topic; each line is a choice someone could reasonably have made diffe
 | A1 | One Streamlit file with sidebar radio navigation instead of a multipage folder. | Fewer files, matches the target structure, and AppTest can drive the pages through the radio widget. |
 | A2 | Simulation results are cached per parameter set (`st.cache_resource`). Cost parameters are applied afterwards without re-simulating. | Cost assumptions do not change the inventory policy, so moving the cost sliders responds instantly. A full re-simulation takes about 2 seconds. |
 | A3 | Replay uses `st.fragment(run_every=…)` and steps by **wall-clock time**: day += elapsed / interval. | The first version moved one day per refresh and ran at about half the selected speed, because each refresh waits for the charts to render. |
-| A4 | The replay compares two methods (static vs. adaptive) in a sliding 120-day window. The default material is a demand up-shift item. | Four methods at once was unreadable. The up-shift item makes the effect visible within about 2 minutes of playback. |
+| A4 | The replay compares two methods (quarterly refresh vs. adaptive) in a sliding 120-day window. The default material is a demand up-shift item. The drill-down defaults to a seasonal item. | Four methods at once was unreadable. The defaults show the two cases a viewer should see first. |
 | A5 | Planners approve or reject changes in an editable table. Approved rows are added to the MM17 file. | Demonstrates the approval step, which is the key design point, rather than just describing it. |
 | A6 | One fixed colour per method (blue = adaptive, orange = static, …), taken from a validated colour-blind-safe palette. | The colours stay the same when methods are toggled on and off. |
 | A7 | The README uses real app screenshots taken during testing. The GIF is a placeholder. | No screen-recording tool was available in the autonomous session. |
@@ -77,3 +77,16 @@ Grouped by topic; each line is a choice someone could reasonably have made diffe
 |---|----------|-----|
 | T1 | Added `pyproject.toml` with only a pytest `pythonpath` setting. | Lets the tests import `src/adaptive_ss` without installing the package. No new dependencies. |
 | T2 | No `gh` CLI on the machine. Pushes go through plain `git` with the existing credential manager. | — |
+
+## Revision 2: honest baseline (after review)
+
+The first version reported a 59% saving against a never-updated safety stock, with large demand
+shifts and a high stockout penalty. That was unrealistic. Changes made:
+
+| # | Change | Effect on the headline |
+|---|--------|------------------------|
+| R1 | Headline baseline switched to the **quarterly refresh** (M1). | Largest effect. The never-updated setting stays as a reference only. |
+| R2 | Stockout cost set to 1.5 × a 25% margin = 37.5% of value (C2). | Moderate. The saving is 7.1% at 1× margin and 11.1% at 2× margin. |
+| R3 | Growth/decline: ±10–25% over 18 months (was +100–150% / −50–65%). Regime shift: ±10–25% level, ×1.5 volatility (D8). Seasonal amplitude unchanged (±30–50%). | Trend and shift materials are now roughly break-even against the quarterly baseline. |
+| R4 | Nothing was tuned towards a target. The result is **9.4%**, slightly above the expected 2–8%. Seasonal items explain about 96% of it. Without them the saving is about 0.5%. Both facts are reported in the app and the README instead of being adjusted away. | — |
+

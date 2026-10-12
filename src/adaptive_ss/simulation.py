@@ -1,7 +1,8 @@
 """Daily (s, Q) reorder-point simulation.
 
 Daily sequence for every material and method:
-  1. (adaptive methods, on review days) recalculate SS / ROP / Q from history before today
+  1. recalculate SS / ROP / Q from history before today: adaptive methods every
+     `review_every` days, the "quarterly" baseline every 90 days, "static" never
   2. goods receipts of purchase orders due today
   3. demand: served from stock; the rest is lost (lost-sales) or backordered
   4. reorder check: inventory position = on hand + open POs (- backorders);
@@ -27,6 +28,7 @@ from .data_gen import Dataset
 class SimConfig:
     window: int = 90             # days of demand history for rolling / empirical
     review_every: int = 7        # recalculation frequency in days (adaptive methods)
+    baseline_refresh: int = 90   # planner refresh cycle of the "quarterly" baseline
     ewma_alpha: float = 0.05     # smoothing factor for EWMA demand mean/variance
     lt_window: int = 180         # days of goods receipts used for lead-time statistics
     warmup: int = 60             # days excluded from KPIs; also the baseline period
@@ -94,6 +96,20 @@ def baseline_params(demand: np.ndarray, lt_hist: pd.DataFrame, service_level: fl
     return methods.rolling_params(demand[:warmup], lt, service_level, plifz)
 
 
+def last_refresh_day(t: int, cfg: SimConfig) -> int:
+    """Day of the most recent quarterly planner refresh on or before day t."""
+    if t < cfg.warmup:
+        return cfg.warmup
+    return cfg.warmup + (t - cfg.warmup) // cfg.baseline_refresh * cfg.baseline_refresh
+
+
+def quarterly_params(demand: np.ndarray, lt_hist, t: int, service_level: float,
+                     plifz: float, cfg: SimConfig) -> methods.Params:
+    """Setting in MARC on day t under the quarterly-refresh baseline."""
+    return estimate("rolling", demand, lt_hist, last_refresh_day(t, cfg), service_level,
+                    plifz, cfg)
+
+
 def simulate_material(demand: np.ndarray, lt_hist: pd.DataFrame, lt_draws: np.ndarray,
                       service_level: float, plifz: float, method: str,
                       cfg: SimConfig = SimConfig(), matnr: str = "") -> SimResult:
@@ -113,7 +129,10 @@ def simulate_material(demand: np.ndarray, lt_hist: pd.DataFrame, lt_draws: np.nd
     receipt_days: list[int] = []
 
     for t in range(n):
-        if method != "static" and t >= cfg.warmup and (t - cfg.warmup) % cfg.review_every == 0:
+        if method == "quarterly":
+            if t >= cfg.warmup and (t - cfg.warmup) % cfg.baseline_refresh == 0:
+                params = estimate("rolling", demand, lt_arrays, t, service_level, plifz, cfg)
+        elif method != "static" and t >= cfg.warmup and (t - cfg.warmup) % cfg.review_every == 0:
             params = estimate(method, demand, lt_arrays, t, service_level, plifz, cfg)
 
         # 2. receipts

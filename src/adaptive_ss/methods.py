@@ -11,9 +11,10 @@ import numpy as np
 import pandas as pd
 from scipy.special import ndtri
 
-METHODS = ["static", "rolling", "ewma", "empirical"]
+METHODS = ["quarterly", "static", "rolling", "ewma", "empirical"]
 METHOD_LABELS = {
-    "static": "Static (SAP as-is)",
+    "quarterly": "Quarterly refresh (baseline)",
+    "static": "Never updated (reference)",
     "rolling": "Rolling window",
     "ewma": "EWMA",
     "empirical": "Empirical percentile",

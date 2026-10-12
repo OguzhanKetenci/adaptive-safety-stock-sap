@@ -62,25 +62,29 @@ def _reason(base, new) -> str:
     if not drivers:
         return "Minor statistical update"
     drivers.sort(reverse=True)
-    return ", ".join(text for _, text in drivers[:3]) + " vs. current setting"
+    return ", ".join(text for _, text in drivers[:3]) + " since last quarterly review"
 
 
 def build_proposals(ds: Dataset, cfg: simulation.SimConfig = simulation.SimConfig(),
                     as_of_day: int | None = None) -> pd.DataFrame:
-    """What the scheduled job would propose on `as_of_day` (default: end of data)."""
+    """What the weekly job would propose on `as_of_day` (default: end of data).
+
+    "Old" values are what MARC holds under the baseline process, i.e. the values the
+    planner set at the most recent quarterly review.
+    """
     t = ds.n_days if as_of_day is None else as_of_day
     marc = ds.marc.set_index("MATNR")
     rows = []
     for _, m in ds.meta.iterrows():
         matnr = m["MATNR"]
         sl = simulation.service_level_for(m, cfg)
-        base = simulation.baseline_params(ds.demand[matnr], ds.lt_hist[matnr], sl,
-                                          m["PLIFZ"], cfg.warmup)
+        base = simulation.quarterly_params(ds.demand[matnr], ds.lt_hist[matnr], t, sl,
+                                           m["PLIFZ"], cfg)
         new = simulation.estimate(m["adaptive_method"], ds.demand[matnr], ds.lt_hist[matnr],
                                   t, sl, m["PLIFZ"], cfg)
-        old_eisbe = int(marc.loc[matnr, "EISBE"])
+        old_eisbe = int(np.ceil(base.ss))
         new_eisbe = int(np.ceil(new.ss))
-        old_minbe, new_minbe = int(marc.loc[matnr, "MINBE"]), int(np.ceil(new.rop))
+        old_minbe, new_minbe = int(np.ceil(base.rop)), int(np.ceil(new.rop))
         change, status_ss = classify_change(old_eisbe, new_eisbe)
         _, status_rop = classify_change(old_minbe, new_minbe)
         status = max(status_ss, status_rop, key=STATUS_ORDER.index)

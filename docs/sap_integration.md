@@ -8,6 +8,13 @@ authorisation concept are for the development team to decide.
 
 ---
 
+## 0. Expected benefit (from the simulation)
+
+Against a disciplined quarterly planner review, the weekly job lowered total cost by about 9% in
+the simulation. Almost all of that came from seasonal materials. For the rest of the portfolio it
+was close to break-even. The business case is therefore planner time plus better coverage of
+seasonal items, not a large inventory reduction. That should be stated clearly to stakeholders.
+
 ## 1. Business goal in one paragraph
 
 Safety stock (`MARC-EISBE`) and, for reorder-point materials, the reorder point (`MARC-MINBE`) are
@@ -101,8 +108,8 @@ weekly job ──► proposal table (Z-table, one row per MATNR/WERKS/run)
   MRP would generate noise in MD06/MD07.
 * **Approval limit (±30%)** keeps a human in the loop for big moves. Typical causes are a new
   customer, a phase-out, a supplier problem, or a data error such as a one-off bulk issue. The
-  proposal carries a **reason text** (e.g. *"demand mean +93%, demand variability +86% vs. current
-  setting"*) so the planner can decide in seconds.
+  proposal carries a **reason text** (e.g. *"demand mean +38%, demand variability +31% since last
+  quarterly review"*) so the planner can decide in seconds.
 * **Planner overrides** are kept. If a planner rejects a proposal or sets a manual value, that
   material gets a "frozen until" date and the job skips it until then.
 * **Audit trail:** every posted change shows up in the material change documents (CDHDR/CDPOS, object

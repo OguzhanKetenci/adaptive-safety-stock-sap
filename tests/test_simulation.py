@@ -53,6 +53,24 @@ def test_static_never_changes_and_adaptive_only_on_review_days(ds):
     assert all((t - 60) % 14 == 0 for t in change_days)
 
 
+def test_quarterly_baseline_refreshes_every_90_days(ds):
+    m = ds.materials[9]
+    q = _run(ds, m, "quarterly").daily
+    change_days = q.index[q["ss"].diff().fillna(0) != 0]
+    assert len(change_days) > 0
+    assert all((t - 60) % 90 == 0 for t in change_days)
+    # quarterly uses the same formula as the weekly rolling method on refresh days
+    r = _run(ds, m, "rolling", review_every=90).daily
+    assert np.allclose(q["ss"], r["ss"])
+
+
+def test_last_refresh_day():
+    cfg = sim.SimConfig()
+    assert sim.last_refresh_day(540, cfg) == 510
+    assert sim.last_refresh_day(149, cfg) == 60
+    assert sim.last_refresh_day(150, cfg) == 150
+
+
 def test_identical_during_warmup(ds):
     m = ds.materials[3]
     a, b = _run(ds, m, "static").daily, _run(ds, m, "ewma").daily
@@ -76,9 +94,10 @@ def test_no_lookahead(ds):
     assert p1 == p2
 
 
-def test_growth_material_static_underperforms(ds):
-    from adaptive_ss import costs
-    m = ds.meta[ds.meta["pattern"] == "growth"]["MATNR"].iloc[0]
-    res = {(m, k): _run(ds, m, k) for k in ["static", "rolling"]}
-    k = costs.kpi_table(res, ds.meta[ds.meta["MATNR"] == m]).set_index("method")
-    assert k.loc["rolling", "fill_rate"] > k.loc["static", "fill_rate"]
+def test_adaptive_tracks_growth(ds):
+    """On growth materials the weekly estimate of mean demand ends above the go-live value."""
+    ratios = []
+    for m in ds.meta.loc[ds.meta["pattern"] == "growth", "MATNR"]:
+        st, ad = _run(ds, m, "static").daily, _run(ds, m, "rolling").daily
+        ratios.append(ad["d_mean_est"].iloc[-1] / st["d_mean_est"].iloc[-1])
+    assert np.mean(ratios) > 1.05
