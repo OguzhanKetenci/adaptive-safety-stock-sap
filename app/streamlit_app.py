@@ -34,6 +34,9 @@ COLORS = {
 LABEL = methods.METHOD_LABELS
 ALL_METHODS = ["quarterly", "adaptive", "segmented", "rolling", "ewma", "empirical", "static"]
 PAGES = ["Overview", "Material drill-down", "Step-by-step replay", "SAP export", "About & SAP fields"]
+# Plain grey "baseline" text placed where st.metric would show its delta (no arrow).
+BASELINE_NOTE = ('<div style="margin-top:-1rem;font-size:0.875rem;opacity:0.6;'
+                 'line-height:1.6rem">baseline</div>')
 SPEEDS = {"0.5 day/s": 0.5, "1 day/s (slow)": 1.0, "2 days/s": 2.0, "5 days/s": 5.0,
           "10 days/s": 10.0, "30 days/s": 30.0}
 
@@ -233,16 +236,21 @@ def page_overview(cfg, sl_matrix, cp):
         with col, st.container(border=True):
             st.markdown(f"**{title[key]}**")
             st.caption(scope[key])
-            # the baseline gets a neutral "baseline" delta so the rows line up across cards
-            st.metric("Total cost", f"€{row.total_cost / 1000:,.1f}k",
-                      "baseline" if base else f"{row.total_cost / q.total_cost - 1:+.1%} vs quarterly",
-                      delta_color="off" if base else "inverse")
-            st.metric("Fill rate", f"{row.fill_rate:.1%}",
-                      "baseline" if base else f"{(row.fill_rate - q.fill_rate) * 100:+.1f} pp",
-                      delta_color="off" if base else "normal")
-            st.metric("EISBE changes ≥ 5 %", f"{changes[key]:,}",
-                      "baseline" if base else f"{changes[key] - changes['quarterly']:+,}",
-                      delta_color="off")
+            # st.metric always draws an arrow next to a delta, so the baseline card shows
+            # the metric without delta plus a plain grey "baseline" line in the delta's place
+            for label, value, delta, color in [
+                ("Total cost", f"€{row.total_cost / 1000:,.1f}k",
+                 f"{row.total_cost / q.total_cost - 1:+.1%} vs quarterly", "inverse"),
+                ("Fill rate", f"{row.fill_rate:.1%}",
+                 f"{(row.fill_rate - q.fill_rate) * 100:+.1f} pp", "normal"),
+                ("EISBE changes ≥ 5 %", f"{changes[key]:,}",
+                 f"{changes[key] - changes['quarterly']:+,}", "off"),
+            ]:
+                if base:
+                    st.metric(label, value)
+                    st.markdown(BASELINE_NOTE, unsafe_allow_html=True)
+                else:
+                    st.metric(label, value, delta, delta_color=color)
 
     # --- headline: two sentences --------------------------------------------
     by_pat_sav = imp.groupby("pattern")["savings"].sum().sort_values(ascending=False)
