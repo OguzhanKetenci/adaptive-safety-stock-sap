@@ -18,7 +18,8 @@ METHOD_LABELS = {
     "rolling": "Rolling window",
     "ewma": "EWMA",
     "empirical": "Empirical percentile",
-    "adaptive": "Adaptive (recommended mix)",
+    "adaptive": "Adaptive for all (weekly)",
+    "segmented": "Segmented policy",
 }
 
 # Target cycle service level per ABC x XYZ segment.
@@ -32,6 +33,12 @@ SERVICE_LEVEL_MATRIX = {
 # Average inter-demand interval above which demand is treated as intermittent
 # (Syntetos-Boylan cut-off).
 ADI_INTERMITTENT = 1.32
+
+# Segmented policy: seasonality strength from which a material counts as seasonal.
+# Fixed before any results were looked at (0.6 ~ "strong" seasonality in the
+# Hyndman/Wang strength-of-seasonality scale).
+SEASONALITY_THRESHOLD = 0.6
+CV2_LUMPY = 0.49        # Syntetos-Boylan cut-off for the variability of demand sizes
 
 
 # ---------------------------------------------------------------------------
@@ -207,3 +214,56 @@ def segment(stats: pd.DataFrame) -> pd.DataFrame:
     out["intermittent"] = out["adi"] > ADI_INTERMITTENT
     out["adaptive_method"] = np.where(out["intermittent"], "empirical", "rolling")
     return out
+
+
+# ---------------------------------------------------------------------------
+# Demand classification for the segmented policy
+# ---------------------------------------------------------------------------
+def seasonality_strength(daily: np.ndarray, bucket: int = 7, period: int = 365) -> float:
+    """Strength of yearly seasonality in [0, 1] from daily history.
+
+    Weekly totals are regressed on level + linear trend + one yearly harmonic.
+    Strength = max(0, 1 - Var(residual) / Var(seasonal + residual)), the
+    Hyndman/Wang measure. A trend alone does not count as seasonality.
+    """
+    d = np.asarray(daily, dtype=float)
+    w = d.size // bucket
+    if w < 26:                        # need at least half a year of weekly buckets
+        return 0.0
+    y = d[-w * bucket:].reshape(w, bucket).sum(axis=1)
+    t = np.arange(w)
+    ang = 2 * np.pi * t * bucket / period
+    X = np.column_stack([np.ones(w), t, np.sin(ang), np.cos(ang)])
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    seasonal = X[:, 2:] @ beta[2:]
+    resid = y - X @ beta
+    denom = np.var(seasonal + resid)
+    return float(max(0.0, 1 - np.var(resid) / denom)) if denom > 0 else 0.0
+
+
+def sbc_class(daily: np.ndarray) -> tuple[str, float, float]:
+    """Syntetos-Boylan class from ADI and CV^2 of the non-zero demand sizes."""
+    d = np.asarray(daily, dtype=float)
+    a = adi(d)
+    nz = d[d > 0]
+    cv2 = float((nz.std(ddof=1) / nz.mean()) ** 2) if nz.size > 1 else 0.0
+    if a <= ADI_INTERMITTENT:
+        cls = "smooth" if cv2 <= CV2_LUMPY else "erratic"
+    else:
+        cls = "intermittent" if cv2 <= CV2_LUMPY else "lumpy"
+    return cls, a, cv2
+
+
+def classify_policy(history: np.ndarray) -> dict:
+    """Decide from consumption history whether weekly recalculation is worth it.
+
+    Weekly review for seasonal demand (strength >= SEASONALITY_THRESHOLD) and for
+    intermittent/lumpy demand (ADI > 1.32); quarterly refresh for everything else.
+    """
+    strength = seasonality_strength(history)
+    cls, a, cv2 = sbc_class(history)
+    seasonal = strength >= SEASONALITY_THRESHOLD
+    intermittent = a > ADI_INTERMITTENT
+    return {"seasonality_strength": strength, "adi_12m": a, "cv2_12m": cv2, "sbc_class": cls,
+            "is_seasonal": bool(seasonal), "is_intermittent": bool(intermittent),
+            "weekly_review": bool(seasonal or intermittent)}

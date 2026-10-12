@@ -22,7 +22,8 @@ def _goto(at, page):
 def test_overview_renders_headline(at):
     assert not at.exception
     assert any("Headline" in i.value for i in at.info)
-    assert len(at.metric) >= 4
+    assert len(at.metric) >= 7
+    assert any("Segmented policy" in h.value for h in at.subheader)
 
 
 def test_drilldown(at):

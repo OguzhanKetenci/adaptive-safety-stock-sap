@@ -15,7 +15,8 @@ Repository: https://github.com/OguzhanKetenci/adaptive-safety-stock-sap (branch 
 | 7. Streamlit app: overview, drill-down, replay (Play/Pause/Next day, speed, default 1 day/s), parameter sidebar, export with download | ✅ Done | `app/streamlit_app.py` |
 | 8. SAP integration briefing | ✅ Done | `docs/sap_integration.md` |
 | 9. README: problem → approach → results | ✅ Done (real screenshots; GIF is a placeholder) | `README.md` |
-| 10. Tests | ✅ **57 passed**, including a headless Streamlit AppTest | `tests/` |
+| 10. Tests | ✅ **69 passed**, including a headless Streamlit AppTest | `tests/` |
+| Add-on: segmented policy (weekly only for seasonal/intermittent, detected from data) | ✅ Done | `methods.classify_policy`, Overview page |
 
 ## Headline result (revision 2: honest baseline)
 
@@ -44,6 +45,24 @@ The result is slightly above the 2–8% you might expect. The reason is the 5 se
 the portfolio. A portfolio with fewer seasonal items should expect close to break-even, with the
 main benefit being planner time.
 
+## Segmented policy (revision 3)
+
+The segmented policy recalculates weekly only for materials that look seasonal (seasonality
+strength ≥ 0.6) or intermittent (ADI > 1.32) in the 12 months of consumption before go-live, and
+keeps the quarterly refresh for the rest. Both thresholds were fixed before any results were
+looked at. 7 of 30 materials qualify.
+
+* **Result: −7.5% total cost vs. quarterly, against −9.4% for adaptive-for-all.** The segmented
+  policy does **not** beat adaptive-for-all. It is €5.4k (2.0%) more expensive. Fill rate is 98.3%,
+  against 98.6% for adaptive-for-all and 98.1% for quarterly.
+* **It does cut master-data churn by 37%:** 273 EISBE changes of 5% or more, against 436 for
+  adaptive-for-all and 118 for quarterly.
+* **Why it falls short:** 3 of the 5 seasonal materials score 0.50–0.58 on one year of history and
+  are missed. There were no false positives, and all intermittent items were caught.
+* **Hindsight check only:** with a threshold of 0.4, all seasonal items are caught and the policy
+  reaches −10.0%, about 0.6 points better than adaptive-for-all. The policy is worth pursuing once
+  seasonality can be detected reliably, for example from 2–3 years of history.
+
 ## What is unfinished
 
 * **The README GIF is a placeholder.** No screen-recording tool was available, so static
@@ -67,7 +86,7 @@ main benefit being planner time.
   future commits.
 * Pytest shows two harmless protobuf deprecation warnings that come from inside Streamlit.
 
-## Three next steps
+## Next steps
 
 1. **Run it on real data.** Read MSEG/MATDOC goods issues and EKKO/EKBE receipts for one plant in
    shadow mode (proposals only). Compare the proposals with planner judgement, and add back
@@ -75,7 +94,9 @@ main benefit being planner time.
 2. **Add forecast-aware safety stock for seasonal items.** Seasonal items are where the value is.
    Computing σ from forecast error and anticipating the season, instead of following it, should
    beat both the weekly and the quarterly approach.
-3. **Optimise the service-level matrix.** Instead of fixed targets, choose per-segment service
+3. **Make the segmented policy robust.** Detect seasonality from 2–3 years of history (or from a
+   planner flag) and re-classify every quarter. Detection, not the policy idea, limits the result.
+4. **Optimise the service-level matrix.** Instead of fixed targets, choose per-segment service
    levels that minimise total cost under a budget for inventory value, and re-run the ABC/XYZ
    segmentation quarterly.
 

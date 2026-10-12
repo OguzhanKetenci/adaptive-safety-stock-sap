@@ -58,14 +58,21 @@ def kpi_table(results: dict[tuple[str, str], SimResult], meta: pd.DataFrame,
 
     'adaptive' = rolling window for regular demand, empirical percentile for
     intermittent demand (choice made from the baseline period, no hindsight).
+    'segmented' = the adaptive method only for materials classified as seasonal or
+    intermittent from the 12-month history before go-live, quarterly refresh otherwise.
     """
     price = meta.set_index("MATNR")["price"]
     rows = [material_kpis(r, price[m], costs, warmup) for (m, _), r in results.items()]
     kpis = pd.DataFrame(rows)
-    choice = meta.set_index("MATNR")["adaptive_method"]
-    mix = kpis[kpis["method"] == kpis["MATNR"].map(choice)].copy()
-    mix["method"] = "adaptive"
-    kpis = pd.concat([kpis, mix], ignore_index=True)
+    composites = [kpis]
+    for name, col in [("adaptive", "adaptive_method"), ("segmented", "segmented_method")]:
+        if col not in meta:
+            continue
+        choice = meta.set_index("MATNR")[col]
+        mix = kpis[kpis["method"] == kpis["MATNR"].map(choice)].copy()
+        mix["method"] = name
+        composites.append(mix)
+    kpis = pd.concat(composites, ignore_index=True)
     return kpis.merge(meta[["MATNR", "WERKS", "pattern", "segment", "price"]], on="MATNR")
 
 

@@ -94,6 +94,44 @@ items, because it would anticipate the season instead of following it.
 *Reference:* a never-updated safety stock would cost about €320k with a 96.9% fill rate, about
 10% more than the quarterly refresh. It is not used for the headline.
 
+### Segmented policy: weekly only where it should pay off
+
+If almost all of the benefit comes from seasonal and intermittent items, why recalculate the
+others weekly at all? The **segmented policy** recalculates weekly only for materials that *look*
+seasonal or intermittent in the **12 months of consumption before go-live**. All other materials
+keep the quarterly refresh. The classification uses only demand data, never the generator's
+labels:
+
+* **Seasonal** if the seasonality strength is ≥ 0.6. The strength is measured on weekly totals,
+  after removing a linear trend, by fitting one yearly wave.
+* **Intermittent** if the average interval between demands (ADI) is above 1.32, the
+  Syntetos–Boylan cut-off. CV² is reported alongside it for the full smooth / erratic /
+  intermittent / lumpy classification.
+
+Both thresholds were fixed before any results were looked at. 7 of 30 materials qualify for
+weekly review.
+
+| Policy | Total cost | vs. quarterly | Fill rate | EISBE changes ≥ 5% |
+|---|---|---|---|---|
+| Quarterly refresh (baseline) | €291.7k | — | 98.1% | 118 |
+| Adaptive for all (weekly) | €264.4k | −9.4% | 98.6% | 436 |
+| **Segmented policy** | €269.8k | −7.5% | 98.3% | 273 |
+
+**The segmented policy does not beat adaptive-for-all in this run.** It costs about €5.4k (2.0%)
+more. What it does deliver is 37% fewer master-data changes, which matters for planner trust and
+MRP stability.
+
+The shortfall comes down to detection. With only one year of history, 3 of the 5 seasonal
+materials score between 0.50 and 0.58, just below the threshold. They stay on the quarterly refresh
+and miss exactly the gain the policy was designed to capture. No non-seasonal material was wrongly
+flagged; the highest score among them was 0.29. All 5 intermittent materials were caught.
+
+As a hindsight check only, not used for any headline: if the threshold were lowered to 0.4 after
+seeing these scores, all five seasonal items would be caught. The segmented policy would then
+reach −10.0% and beat adaptive-for-all by about 0.6 percentage points. So the idea is sound, but
+its value depends on detecting seasonality reliably. In practice that means using 2–3 years of
+history or a planner's judgement, rather than one year and a fixed cut-off.
+
 | Drill-down: safety stock follows the season (seasonal material) | Step-by-step replay |
 |---|---|
 | ![Drill-down](docs/img/drilldown.jpg) | ![Replay](docs/img/replay.jpg) |
@@ -105,7 +143,7 @@ items, because it would anticipate the season instead of following it.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Headline result vs. the quarterly refresh, cost by method, the ABC × XYZ segment matrix with savings per cell, results by demand pattern, top materials by impact (including where adaptive does worse) |
+| **Overview** | Headline result vs. the quarterly refresh, the segmented-policy comparison with its per-material demand classification, cost by method, the ABC × XYZ segment matrix with savings per cell, results by demand pattern, top materials by impact (including where adaptive does worse) |
 | **Material drill-down** | Demand, on-hand inventory per method (quarterly vs. adaptive by default), safety stock over time, and KPIs for one material |
 | **Step-by-step replay** | Day-by-day playback with ▶ Play / ⏸ Pause / ⏭ Next day / ⏮ Reset and a speed control (default slow: 1 day per second). Shows receipts, issues, POs placed and EISBE recalculations as they happen |
 | **SAP export** | Proposed EISBE/MINBE changes with reason and status. Planners can approve or reject the large changes in the table, then download the proposal list and the MM17 upload file |
@@ -157,7 +195,8 @@ is described in [docs/sap_integration.md](docs/sap_integration.md).
 ```
 src/adaptive_ss/
   data_gen.py     deterministic SAP-like tables (MARA, MARC, MVER, EKKO, EKPO, EKBE)
-  methods.py      safety stock formulas, EWMA, empirical method, ABC/XYZ segmentation
+  methods.py      safety stock formulas, EWMA, empirical method, ABC/XYZ segmentation,
+                  seasonality strength + ADI/CV² classification for the segmented policy
   simulation.py   daily (s,Q) simulation, lost sales / backorder
   costs.py        cost model and KPIs (fill rate, cycle service level, stockout days, ...)
   sap_export.py   proposal list + MM17/LSMW upload file with approval logic
@@ -185,6 +224,8 @@ DECISIONS.md      every modelling choice and why
 * **The result depends on the portfolio mix.** 5 of the 30 materials are seasonal (±30–50%
   swing), and they drive the saving. A portfolio with fewer or milder seasonal items should expect
   close to break-even.
+* **Seasonality detection uses one year of history.** That is too short to separate a yearly cycle
+  reliably from noise, and it is the main reason the segmented policy falls short.
 * **The quarterly planner is idealised.** The simulated planner always refreshes on time and uses
   the same formula. Real reviews slip, which would make the weekly job look somewhat better.
 

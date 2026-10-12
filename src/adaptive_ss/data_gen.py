@@ -28,6 +28,7 @@ N_DAYS = 540            # simulation horizon (~18 months)
 BASELINE_DAYS = 60      # history used for the initial ("static") SAP settings
 SHIFT_DAY = 180         # regime shift day
 PO_HISTORY_START = -150 # PO history starts before day 0 so lead times are known at go-live
+HISTORY_DAYS = 365      # consumption history before go-live (used to classify demand)
 START_DATE = pd.Timestamp("2025-01-06")  # a Monday -> day % 7 == 0 is Monday
 
 PATTERNS = (["stable"] * 6 + ["growth"] * 5 + ["decline"] * 4 + ["seasonal"] * 5
@@ -70,6 +71,7 @@ class Dataset:
     demand: dict[str, np.ndarray] = field(repr=False)        # MATNR -> daily demand
     lt_hist: dict[str, pd.DataFrame] = field(repr=False)     # MATNR -> (gr_day, lt)
     lt_draws: dict[str, np.ndarray] = field(repr=False)      # MATNR -> future LTs for sim
+    history: dict[str, np.ndarray] = field(default_factory=dict, repr=False)  # 12 months pre go-live
     n_days: int = N_DAYS
     baseline_days: int = BASELINE_DAYS
 
@@ -81,9 +83,17 @@ class Dataset:
 # ---------------------------------------------------------------------------
 # Demand
 # ---------------------------------------------------------------------------
-def _demand_series(pattern: str, i: int, n_days: int) -> tuple[np.ndarray, dict]:
-    r = _rng(i, 0)
+def _demand_series(pattern: str, i: int, n_days: int,
+                   hist_days: int = HISTORY_DAYS) -> tuple[np.ndarray, dict, np.ndarray]:
+    """Daily demand for the horizon (days 0..n-1) and for the history before go-live.
+
+    The history (days -hist_days..-1) follows the same pattern but uses its own random
+    stream, so the horizon series is identical with or without it.
+    """
+    r = _rng(i, 0)          # horizon stream (unchanged)
+    rh = _rng(i, 4)         # pre-go-live history stream
     t = np.arange(n_days)
+    th = np.arange(-hist_days, 0)
     base = r.uniform(5, 80)
     cv = r.uniform(0.2, 0.9)
     info: dict = {"base_true": base, "cv_true": cv}
@@ -94,24 +104,32 @@ def _demand_series(pattern: str, i: int, n_days: int) -> tuple[np.ndarray, dict]
         occurs = r.random(n_days) < p
         sizes = np.maximum(1, np.round(r.lognormal(np.log(size), 0.6, n_days)))
         info.update(p_demand=p, mean_size=size, base_true=p * size, cv_true=np.nan)
-        return np.where(occurs, sizes, 0).astype(float), info
+        occ_h = rh.random(hist_days) < p
+        sizes_h = np.maximum(1, np.round(rh.lognormal(np.log(size), 0.6, hist_days)))
+        return (np.where(occurs, sizes, 0).astype(float), info,
+                np.where(occ_h, sizes_h, 0).astype(float))
 
-    mu = np.full(n_days, base)
-    sigma_mult = np.ones(n_days)
+    def mu_of(tt):
+        return np.full(tt.size, base)
+
+    def sig_of(tt):
+        return np.ones(tt.size)
+
     if pattern == "growth":
         g = r.uniform(0.10, 0.25)            # +10-25 % over 18 months
-        mu = base * (1 + g * t / n_days)
+        mu_of = lambda tt: base * (1 + g * tt / n_days)          # noqa: E731
         info["growth_total"] = g
     elif pattern == "decline":
         d = r.uniform(0.10, 0.25)            # -10-25 % over 18 months
-        mu = base * (1 - d * t / n_days)
+        mu_of = lambda tt: base * (1 - d * tt / n_days)          # noqa: E731
         info["decline_total"] = d
     elif pattern == "seasonal":
         amp = r.uniform(0.3, 0.5)
         phase = r.uniform(0, 365)
         weekly = np.array([1.15, 1.10, 1.05, 1.10, 1.00, 0.40, 0.20])
         weekly = weekly / weekly.mean()
-        mu = base * (1 + amp * np.sin(2 * np.pi * (t + phase) / 365)) * weekly[t % 7]
+        mu_of = lambda tt: (base * (1 + amp * np.sin(2 * np.pi * (tt + phase) / 365))  # noqa: E731
+                            * weekly[tt % 7])
         info.update(yearly_amplitude=amp)
     elif pattern == "regime_shift":
         cv = r.uniform(0.15, 0.35)   # calm before the shift so the volatility jump is visible
@@ -119,14 +137,17 @@ def _demand_series(pattern: str, i: int, n_days: int) -> tuple[np.ndarray, dict]
         # level step of +10-25 % (even i) or -10-25 % (odd i), volatility x1.5
         step = r.uniform(0.10, 0.25)
         factor = 1 + step if i % 2 == 0 else 1 - step
-        after = t >= SHIFT_DAY
-        mu = np.where(after, base * factor, base)
-        sigma_mult = np.where(after, 1.5, 1.0)
+        mu_of = lambda tt: np.where(tt >= SHIFT_DAY, base * factor, base)  # noqa: E731
+        sig_of = lambda tt: np.where(tt >= SHIFT_DAY, 1.5, 1.0)            # noqa: E731
         info.update(shift_mean_factor=factor, shift_cv_factor=1.5, shift_day=SHIFT_DAY)
 
-    noise = r.normal(0.0, 1.0, n_days)
-    qty = np.maximum(0, np.round(mu + noise * mu * cv * sigma_mult))
-    return qty.astype(float), info
+    def draw(tt, noise):
+        mu = mu_of(tt)
+        return np.maximum(0, np.round(mu + noise * mu * cv * sig_of(tt))).astype(float)
+
+    qty = draw(t, r.normal(0.0, 1.0, n_days))
+    hist = draw(th, rh.normal(0.0, 1.0, hist_days))
+    return qty, info, hist
 
 
 def _lt_sampler(r: np.random.Generator, mean: float, cv: float, n: int) -> np.ndarray:
@@ -140,7 +161,7 @@ def _lt_sampler(r: np.random.Generator, mean: float, cv: float, n: int) -> np.nd
 # ---------------------------------------------------------------------------
 def generate(n_days: int = N_DAYS) -> Dataset:
     rows_mara, rows_meta = [], []
-    demand, lt_hist, lt_draws = {}, {}, {}
+    demand, lt_hist, lt_draws, history = {}, {}, {}, {}
     po_rows = []
 
     for i, pattern in enumerate(PATTERNS):
@@ -153,8 +174,9 @@ def generate(n_days: int = N_DAYS) -> Dataset:
         lt_mean_true = plifz * r.uniform(0.95, 1.25)    # suppliers tend to be late vs PLIFZ
         lt_cv_true = r.uniform(0.1, 0.35)
 
-        d, info = _demand_series(pattern, i, n_days)
+        d, info, hist = _demand_series(pattern, i, n_days)
         demand[matnr] = d
+        history[matnr] = hist
 
         # PO history: regular ordering cadence starting before go-live
         r_po = _rng(i, 2)
@@ -197,9 +219,11 @@ def generate(n_days: int = N_DAYS) -> Dataset:
                                       ).sort_values("gr_day").reset_index(drop=True)
 
     # --- consumption tables --------------------------------------------------
-    dates = START_DATE + pd.to_timedelta(np.arange(n_days), unit="D")
-    cons = pd.concat([pd.DataFrame({"MATNR": m, "WERKS": w, "day": np.arange(n_days),
-                                    "BUDAT": dates, "MENGE": demand[m]})
+    # history before go-live + horizon, as SAP would hold it in MSEG/MATDOC
+    days = np.arange(-HISTORY_DAYS, n_days)
+    dates = START_DATE + pd.to_timedelta(days, unit="D")
+    cons = pd.concat([pd.DataFrame({"MATNR": m, "WERKS": w, "day": days, "BUDAT": dates,
+                                    "MENGE": np.concatenate([history[m], demand[m]])})
                       for m, w in zip(meta["MATNR"], meta["WERKS"])], ignore_index=True)
     mver = (cons.assign(GJAHR=cons["BUDAT"].dt.year, MONAT=cons["BUDAT"].dt.month)
             .groupby(["MATNR", "WERKS", "GJAHR", "MONAT"], as_index=False)["MENGE"].sum()
@@ -217,6 +241,13 @@ def generate(n_days: int = N_DAYS) -> Dataset:
     seg = methods.segment(pd.DataFrame(seg_rows).set_index("MATNR")).reset_index()
     meta = meta.merge(seg, on="MATNR")
 
+    # --- demand classification for the segmented policy (12 months before go-live) ---
+    pol = pd.DataFrame([{"MATNR": m, **methods.classify_policy(history[m])}
+                        for m in meta["MATNR"]])
+    meta = meta.merge(pol, on="MATNR")
+    meta["segmented_method"] = np.where(meta["weekly_review"], meta["adaptive_method"],
+                                        "quarterly")
+
     for row in meta.itertuples():
         h = lt_hist[row.MATNR]
         lt_obs = h.loc[h["gr_day"] < BASELINE_DAYS, "lt"].to_numpy()
@@ -230,7 +261,7 @@ def generate(n_days: int = N_DAYS) -> Dataset:
 
     return Dataset(mara=mara, marc=marc, consumption=cons.drop(columns="day"), mver=mver,
                    ekko=ekko, ekpo=ekpo, ekbe=ekbe, meta=meta, demand=demand,
-                   lt_hist=lt_hist, lt_draws=lt_draws, n_days=n_days)
+                   lt_hist=lt_hist, lt_draws=lt_draws, n_days=n_days, history=history)
 
 
 def save_sample(ds: Dataset, folder: str | Path) -> None:

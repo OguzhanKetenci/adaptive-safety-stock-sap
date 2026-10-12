@@ -25,13 +25,14 @@ COLORS = {
     "adaptive": "#2a78d6",
     "quarterly": "#eb6834",
     "static": "#eda100",
+    "segmented": "#008300",
     "rolling": "#1baf7a",
     "ewma": "#4a3aa7",
     "empirical": "#e87ba4",
     "demand": "#9a9893",
 }
 LABEL = methods.METHOD_LABELS
-ALL_METHODS = ["quarterly", "adaptive", "rolling", "ewma", "empirical", "static"]
+ALL_METHODS = ["quarterly", "adaptive", "segmented", "rolling", "ewma", "empirical", "static"]
 PAGES = ["Overview", "Material drill-down", "Step-by-step replay", "SAP export", "About & SAP fields"]
 SPEEDS = {"0.5 day/s": 0.5, "1 day/s (slow)": 1.0, "2 days/s": 2.0, "5 days/s": 5.0,
           "10 days/s": 10.0, "30 days/s": 30.0}
@@ -66,8 +67,8 @@ def get_kpis(cfg, sl_matrix, cost_params) -> pd.DataFrame:
 
 
 def series(results, matnr: str, method: str) -> pd.DataFrame:
-    if method == "adaptive":
-        method = get_base_data().meta.set_index("MATNR").loc[matnr, "adaptive_method"]
+    if method in ("adaptive", "segmented"):
+        method = get_base_data().meta.set_index("MATNR").loc[matnr, f"{method}_method"]
     return results[(matnr, method)].daily
 
 
@@ -166,6 +167,73 @@ def method_lines(results, matnr, meths, col, title, ytitle, cfg, pattern, upto=N
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
+def eisbe_changes(results, meta: pd.DataFrame, col: str | None, warmup: int,
+                  min_change: float = 0.05) -> int:
+    """Number of EISBE changes of at least `min_change` (i.e. passing the dead band)."""
+    total = 0
+    for m, row in meta.set_index("MATNR").iterrows():
+        meth = row[col] if col else "quarterly"
+        ss = results[(m, meth)].daily["ss"].to_numpy()[warmup:]
+        prev, cur = ss[:-1], ss[1:]
+        rel = np.abs(cur - prev) / np.maximum(prev, 1)
+        total += int(((cur != prev) & (rel >= min_change)).sum())
+    return total
+
+
+def segmented_section(cfg, sl_matrix, kpis, summ, ds):
+    st.subheader("Segmented policy: weekly only where it should pay off")
+    meta = ds.meta
+    n_weekly = int(meta["weekly_review"].sum())
+    st.markdown(
+        "Instead of recalculating every material weekly, the **segmented policy** reviews weekly only "
+        f"the materials that look seasonal or intermittent in the **12 months of consumption before "
+        f"go-live**, and keeps the quarterly refresh for everything else. A material counts as "
+        f"*seasonal* if its seasonality strength is ≥ {methods.SEASONALITY_THRESHOLD:.1f}, and as "
+        f"*intermittent* if ADI > {methods.ADI_INTERMITTENT}. Both thresholds were fixed before "
+        f"looking at results. **{n_weekly} of {len(meta)}** materials qualify for weekly review.")
+
+    q, a, s_ = (summ.loc[m] for m in ["quarterly", "adaptive", "segmented"])
+    results = run_simulation(cfg, sl_matrix)
+    changes = {"quarterly": eisbe_changes(results, meta, None, cfg.warmup),
+               "adaptive": eisbe_changes(results, meta, "adaptive_method", cfg.warmup),
+               "segmented": eisbe_changes(results, meta, "segmented_method", cfg.warmup)}
+    c1, c2, c3 = st.columns(3)
+    for col, key, row in [(c1, "quarterly", q), (c2, "adaptive", a), (c3, "segmented", s_)]:
+        with col:
+            st.markdown(f"**{LABEL[key]}**")
+            delta = None if key == "quarterly" else f"{row.total_cost / q.total_cost - 1:+.1%} vs quarterly"
+            st.metric("Total cost", eur(row.total_cost), delta, delta_color="inverse")
+            st.caption(f"Fill rate {row.fill_rate:.1%} · {changes[key]} EISBE changes ≥ 5 %")
+
+    diff = s_.total_cost - a.total_cost
+    missed = meta[(meta["pattern"] == "seasonal") & ~meta["is_seasonal"]]
+    false_pos = meta[~meta["pattern"].isin(["seasonal", "intermittent"]) & meta["weekly_review"]]
+    verdict = ("**beats** adaptive-for-all" if diff < 0 else "does **not** beat adaptive-for-all")
+    msg = (f"The segmented policy {verdict}: its total cost is {eur(abs(diff))} "
+           f"({abs(diff) / a.total_cost:.1%}) {'lower' if diff < 0 else 'higher'}. In exchange it "
+           f"makes {changes['adaptive'] - changes['segmented']} fewer EISBE changes "
+           f"({1 - changes['segmented'] / max(changes['adaptive'], 1):.0%} less master-data churn).")
+    if len(missed):
+        msg += (f" Why: {len(missed)} of {int((meta['pattern'] == 'seasonal').sum())} seasonal "
+                "materials score below the seasonality threshold on one year of history, so they "
+                "stay on the quarterly refresh and miss the weekly benefit.")
+    if len(false_pos):
+        msg += f" {len(false_pos)} non-seasonal material(s) were wrongly put on weekly review."
+    (st.success if diff < 0 else st.warning)(msg)
+
+    with st.expander("Demand classification per material (from the 12 months before go-live)"):
+        cls = meta.merge(ds.mara[["MATNR", "MAKTX"]], on="MATNR")[
+            ["MATNR", "MAKTX", "seasonality_strength", "adi_12m", "cv2_12m", "sbc_class",
+             "weekly_review", "segmented_method", "pattern"]]
+        cls = cls.rename(columns={"pattern": "generator label (check only)",
+                                  "segmented_method": "policy"})
+        cls["policy"] = cls["policy"].map(lambda m: "quarterly" if m == "quarterly" else f"weekly ({m})")
+        st.dataframe(cls.style.format({"seasonality_strength": "{:.2f}", "adi_12m": "{:.2f}",
+                                       "cv2_12m": "{:.2f}"}),
+                     hide_index=True, use_container_width=True)
+        st.caption("The generator label is shown only to check the classifier. The policy never uses it.")
+
+
 def page_overview(cfg, sl_matrix, cp):
     ds = dataset_with_targets(sl_matrix)
     kpis = get_kpis(cfg, sl_matrix, cp)
@@ -214,10 +282,12 @@ def page_overview(cfg, sl_matrix, cp):
                f"with a fill rate of {h['static_fill']:.1%}. It is not used for the headline, because "
                "comparing against neglected master data overstates the benefit.")
 
+    segmented_section(cfg, sl_matrix, kpis, summ, ds)
+
     left, right = st.columns([1.15, 1])
     with left:
         st.subheader("Cost by method")
-        order = ["quarterly", "adaptive", "rolling", "ewma", "empirical", "static"]
+        order = ["quarterly", "adaptive", "segmented", "rolling", "ewma", "empirical", "static"]
         fig = go.Figure()
         for comp, color in [("holding_cost", "#2a78d6"), ("stockout_cost", "#eb6834"),
                             ("ordering_cost", "#9a9893")]:
@@ -225,7 +295,7 @@ def page_overview(cfg, sl_matrix, cp):
                         name=comp.replace("_", " ").capitalize(), marker_color=color,
                         marker_line_color="rgba(0,0,0,0)",
                         hovertemplate="%{y}<br>%{x:,.0f} €<extra>" + comp.split("_")[0] + "</extra>")
-        fig.update_layout(barmode="stack", height=360, margin=dict(l=10, r=10, t=30, b=10),
+        fig.update_layout(barmode="stack", height=390, margin=dict(l=10, r=10, t=30, b=10),
                           legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
                           xaxis_title="€ over evaluation period",
                           bargap=0.35)
@@ -268,11 +338,11 @@ def page_overview(cfg, sl_matrix, cp):
     st.subheader("Where the difference comes from")
     c1, c2 = st.columns(2)
     by_pat = kpis.pivot_table(index="pattern", columns="method", values="total_cost", aggfunc="sum")
-    by_pat = by_pat[["quarterly", "adaptive"]]
+    by_pat = by_pat[["quarterly", "adaptive", "segmented"]]
     by_pat = by_pat.loc[(by_pat["quarterly"] - by_pat["adaptive"]).sort_values(ascending=False).index]
     with c1:
         fig = go.Figure()
-        for m in ["quarterly", "adaptive"]:
+        for m in ["quarterly", "adaptive", "segmented"]:
             fig.add_bar(x=by_pat.index.str.replace("_", " "), y=by_pat[m], name=LABEL[m],
                         marker_color=COLORS[m], hovertemplate="%{x}: %{y:,.0f} €<extra>" + LABEL[m] + "</extra>")
         fig.update_layout(barmode="group", height=330, margin=dict(l=10, r=10, t=30, b=10),

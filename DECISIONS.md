@@ -90,3 +90,14 @@ shifts and a high stockout penalty. That was unrealistic. Changes made:
 | R3 | Growth/decline: ±10–25% over 18 months (was +100–150% / −50–65%). Regime shift: ±10–25% level, ×1.5 volatility (D8). Seasonal amplitude unchanged (±30–50%). | Trend and shift materials are now roughly break-even against the quarterly baseline. |
 | R4 | Nothing was tuned towards a target. The result is **9.4%**, slightly above the expected 2–8%. Seasonal items explain about 96% of it. Without them the saving is about 0.5%. Both facts are reported in the app and the README instead of being adjusted away. | — |
 
+## Revision 3: segmented policy
+
+| # | Decision | Why |
+|---|----------|-----|
+| G1 | Added 365 days of consumption history **before go-live** (days −365…−1). It uses its own random stream, so the 540-day horizon and all earlier results are byte-identical. The history also appears in `consumption_daily` / `MVER`. | Detecting yearly seasonality needs at least a year of data. A real SAP system has it in MSEG/MATDOC. Using horizon data for the classification would be hindsight. |
+| G2 | Seasonality strength: weekly totals regressed on level + linear trend + one yearly harmonic. Strength = max(0, 1 − Var(resid)/Var(seasonal + resid)) (Hyndman/Wang). | Weekly buckets remove the weekday pattern. The trend term stops growth or decline from counting as seasonality. One harmonic is all that one year of data can support. |
+| G3 | Thresholds fixed in advance: seasonal if strength ≥ 0.6, intermittent if ADI > 1.32. CV² (cut-off 0.49) is reported for the full SBC class but does not affect the policy. | 0.6 is a common "strong seasonality" level, and 1.32 is the Syntetos–Boylan cut-off. Fixing them before seeing results avoids tuning. |
+| G4 | Weekly materials use the same method as adaptive-for-all (rolling, or empirical for intermittent). Everything else uses the quarterly refresh. The segmented result is assembled per material from those simulations. | This isolates the effect of *where* weekly review is applied. |
+| G5 | The 0.6 threshold misses 3 of the 5 seasonal items. **It was kept.** The 0.4 result (−10.0%) is reported only as a labelled hindsight check. | Lowering the threshold after seeing the scores would be exactly the tuning this project avoids. |
+| G6 | The "EISBE changes ≥ 5%" KPI counts recalculations that would pass the export's dead band. | It measures master-data churn, the segmented policy's second argument. |
+
