@@ -180,39 +180,92 @@ def eisbe_changes(results, meta: pd.DataFrame, col: str | None, warmup: int,
     return total
 
 
-def segmented_section(cfg, sl_matrix, kpis, summ, ds):
-    st.subheader("Segmented policy: weekly only where it should pay off")
+def classification_expander(ds):
     meta = ds.meta
-    n_weekly = int(meta["weekly_review"].sum())
-    st.markdown(
-        "Instead of recalculating every material weekly, the **segmented policy** reviews weekly only "
-        f"the materials that look seasonal or intermittent in the **12 months of consumption before "
-        f"go-live**, and keeps the quarterly refresh for everything else. A material counts as "
-        f"*seasonal* if its seasonality strength is ≥ {methods.SEASONALITY_THRESHOLD:.1f}, and as "
-        f"*intermittent* if ADI > {methods.ADI_INTERMITTENT}. Both thresholds were fixed before "
-        f"looking at results. **{n_weekly} of {len(meta)}** materials qualify for weekly review.")
+    with st.expander("Demand classification per material (from the 12 months before go-live)"):
+        st.caption(
+            f"Weekly review in the segmented policy if seasonality strength ≥ "
+            f"{methods.SEASONALITY_THRESHOLD:.1f} or ADI > {methods.ADI_INTERMITTENT}. Both thresholds "
+            "were fixed before looking at results. The generator label is shown only to check the "
+            "classifier; the policy never uses it.")
+        cls = meta.merge(ds.mara[["MATNR", "MAKTX"]], on="MATNR")[
+            ["MATNR", "MAKTX", "seasonality_strength", "adi_12m", "cv2_12m", "sbc_class",
+             "segmented_method", "pattern"]]
+        cls = cls.rename(columns={"pattern": "generator label (check only)",
+                                  "segmented_method": "policy"})
+        cls["policy"] = cls["policy"].map(lambda m: "quarterly" if m == "quarterly" else f"weekly ({m})")
+        st.dataframe(cls.style.format({"seasonality_strength": "{:.2f}", "adi_12m": "{:.2f}",
+                                       "cv2_12m": "{:.2f}"}),
+                     hide_index=True, use_container_width=True)
 
-    q, a, s_ = (summ.loc[m] for m in ["quarterly", "adaptive", "segmented"])
+
+def page_overview(cfg, sl_matrix, cp):
+    ds = dataset_with_targets(sl_matrix)
+    meta = ds.meta
+    kpis = get_kpis(cfg, sl_matrix, cp)
+    h = costs.headline(kpis)
+    summ = costs.summary_by_method(kpis)
+    imp = costs.impact_by_material(kpis).join(meta.set_index("MATNR")[["ABC", "XYZ", "service_level"]])
     results = run_simulation(cfg, sl_matrix)
+    n_weekly = int(meta["weekly_review"].sum())
+
+    st.title("Adaptive safety stock vs. a quarterly planner refresh")
+    st.markdown(
+        "A well-run planning team reviews safety stock (**MARC-EISBE**) about once a quarter. "
+        "This demo replays 18 months of daily demand for 30 materials and compares three policies: "
+        f"the quarterly refresh, recalculating **every {cfg.review_every} days for all materials**, and a "
+        "**segmented policy** that recalculates weekly only where demand looks seasonal or "
+        f"intermittent. The KPIs exclude the first {cfg.warmup} warm-up days.")
+
+    # --- one comparison: three policies -------------------------------------
     changes = {"quarterly": eisbe_changes(results, meta, None, cfg.warmup),
                "adaptive": eisbe_changes(results, meta, "adaptive_method", cfg.warmup),
                "segmented": eisbe_changes(results, meta, "segmented_method", cfg.warmup)}
-    c1, c2, c3 = st.columns(3)
-    for col, key, row in [(c1, "quarterly", q), (c2, "adaptive", a), (c3, "segmented", s_)]:
-        with col:
-            st.markdown(f"**{LABEL[key]}**")
-            delta = None if key == "quarterly" else f"{row.total_cost / q.total_cost - 1:+.1%} vs quarterly"
-            st.metric("Total cost", eur(row.total_cost), delta, delta_color="inverse")
-            st.caption(f"Fill rate {row.fill_rate:.1%} · {changes[key]} EISBE changes ≥ 5 %")
+    title = {"quarterly": "Quarterly refresh", "adaptive": "Adaptive for all",
+             "segmented": "Segmented policy"}
+    scope = {"quarterly": "Baseline · every 90 days",
+             "adaptive": f"Weekly · all {len(meta)} materials",
+             "segmented": f"Weekly for {n_weekly} · quarterly for {len(meta) - n_weekly}"}
+    q = summ.loc["quarterly"]
+    for col, key in zip(st.columns(3), ["quarterly", "adaptive", "segmented"]):
+        row = summ.loc[key]
+        base = key == "quarterly"
+        with col, st.container(border=True):
+            st.markdown(f"**{title[key]}**")
+            st.caption(scope[key])
+            # the baseline gets a neutral "baseline" delta so the rows line up across cards
+            st.metric("Total cost", f"€{row.total_cost / 1000:,.1f}k",
+                      "baseline" if base else f"{row.total_cost / q.total_cost - 1:+.1%} vs quarterly",
+                      delta_color="off" if base else "inverse")
+            st.metric("Fill rate", f"{row.fill_rate:.1%}",
+                      "baseline" if base else f"{(row.fill_rate - q.fill_rate) * 100:+.1f} pp",
+                      delta_color="off" if base else "normal")
+            st.metric("EISBE changes ≥ 5 %", f"{changes[key]:,}",
+                      "baseline" if base else f"{changes[key] - changes['quarterly']:+,}",
+                      delta_color="off")
 
-    diff = s_.total_cost - a.total_cost
+    # --- headline: two sentences --------------------------------------------
+    by_pat_sav = imp.groupby("pattern")["savings"].sum().sort_values(ascending=False)
+    top_pat = by_pat_sav.index[0]
+    top_share = by_pat_sav.iloc[0] / h["savings"] if h["savings"] > 0 else np.nan
+    seg_pct = 1 - summ.loc["segmented", "total_cost"] / q.total_cost
+    churn = 1 - changes["segmented"] / max(changes["adaptive"], 1)
+    s1 = (f"Weekly recalculation for all materials {'lowers' if h['savings'] > 0 else 'raises'} total "
+          f"cost by **{abs(h['savings_pct']):.1%}** compared with a quarterly refresh")
+    s1 += (f", and {top_share:.0%} of that comes from **{top_pat.replace('_', ' ')}** materials."
+           if h["savings"] > 0 and top_share > 0.5 else ".")
+    s2 = (f"Reviewing weekly only the {n_weekly} materials that look seasonal or intermittent "
+          f"{'saves' if seg_pct > 0 else 'costs'} **{abs(seg_pct):.1%}** with "
+          f"**{churn:.0%} fewer EISBE changes** than weekly-for-all.")
+    st.info(f"**Headline:** {s1} {s2}")
+
+    # --- why the segmented policy does (not) win ----------------------------
+    diff = summ.loc["segmented", "total_cost"] - summ.loc["adaptive", "total_cost"]
     missed = meta[(meta["pattern"] == "seasonal") & ~meta["is_seasonal"]]
     false_pos = meta[~meta["pattern"].isin(["seasonal", "intermittent"]) & meta["weekly_review"]]
-    verdict = ("**beats** adaptive-for-all" if diff < 0 else "does **not** beat adaptive-for-all")
-    msg = (f"The segmented policy {verdict}: its total cost is {eur(abs(diff))} "
-           f"({abs(diff) / a.total_cost:.1%}) {'lower' if diff < 0 else 'higher'}. In exchange it "
-           f"makes {changes['adaptive'] - changes['segmented']} fewer EISBE changes "
-           f"({1 - changes['segmented'] / max(changes['adaptive'], 1):.0%} less master-data churn).")
+    msg = (f"The segmented policy {'beats' if diff < 0 else 'does not beat'} adaptive-for-all: its "
+           f"total cost is {eur(abs(diff))} ({abs(diff) / summ.loc['adaptive', 'total_cost']:.1%}) "
+           f"{'lower' if diff < 0 else 'higher'}.")
     if len(missed):
         msg += (f" Why: {len(missed)} of {int((meta['pattern'] == 'seasonal').sum())} seasonal "
                 "materials score below the seasonality threshold on one year of history, so they "
@@ -221,68 +274,10 @@ def segmented_section(cfg, sl_matrix, kpis, summ, ds):
         msg += f" {len(false_pos)} non-seasonal material(s) were wrongly put on weekly review."
     (st.success if diff < 0 else st.warning)(msg)
 
-    with st.expander("Demand classification per material (from the 12 months before go-live)"):
-        cls = meta.merge(ds.mara[["MATNR", "MAKTX"]], on="MATNR")[
-            ["MATNR", "MAKTX", "seasonality_strength", "adi_12m", "cv2_12m", "sbc_class",
-             "weekly_review", "segmented_method", "pattern"]]
-        cls = cls.rename(columns={"pattern": "generator label (check only)",
-                                  "segmented_method": "policy"})
-        cls["policy"] = cls["policy"].map(lambda m: "quarterly" if m == "quarterly" else f"weekly ({m})")
-        st.dataframe(cls.style.format({"seasonality_strength": "{:.2f}", "adi_12m": "{:.2f}",
-                                       "cv2_12m": "{:.2f}"}),
-                     hide_index=True, use_container_width=True)
-        st.caption("The generator label is shown only to check the classifier. The policy never uses it.")
-
-
-def page_overview(cfg, sl_matrix, cp):
-    ds = dataset_with_targets(sl_matrix)
-    kpis = get_kpis(cfg, sl_matrix, cp)
-    h = costs.headline(kpis)
-    summ = costs.summary_by_method(kpis)
-    imp = costs.impact_by_material(kpis).join(ds.meta.set_index("MATNR")[["ABC", "XYZ", "service_level"]])
-
-    st.title("Adaptive safety stock vs. a quarterly planner refresh")
-    st.markdown(
-        "A well-run planning team reviews safety stock (**MARC-EISBE**) about once a quarter. "
-        "This demo replays 18 months of daily demand for 30 materials and asks a modest question: "
-        "what does it add to **recalculate every "
-        f"{cfg.review_every} days** from recent consumption and actual supplier lead times, instead "
-        f"of every {cfg.baseline_refresh} days? The KPIs exclude the first {cfg.warmup} warm-up days.")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Cost – quarterly", eur(h["baseline_cost"]))
-    c2.metric("Cost – adaptive", eur(h["adaptive_cost"]),
-              f"{-h['savings_pct']:+.1%}", delta_color="inverse")
-    c3.metric("Fill rate (adaptive)", f"{h['adaptive_fill']:.1%}",
-              f"{(h['adaptive_fill'] - h['baseline_fill']) * 100:+.1f} pp")
-    c4.metric("Inventory value (adaptive)", eur(h["adaptive_inv"]),
-              f"{h['adaptive_inv'] / h['baseline_inv'] - 1:+.1%}", delta_color="inverse")
-
-    # What drives the result: savings by demand pattern (computed, not hard-coded)
-    by_pat_sav = imp.groupby("pattern")["savings"].sum().sort_values(ascending=False)
-    top_pat = by_pat_sav.index[0]
-    top_share = by_pat_sav.iloc[0] / h["savings"] if h["savings"] > 0 else np.nan
-    rest = h["savings"] - by_pat_sav.iloc[0]
-    rest_base = imp.loc[imp["pattern"] != top_pat, "baseline"].sum()
-    n_better = int((imp["savings"] > 0).sum())
-
-    verdict = "lowers" if h["savings"] > 0 else "raises"
-    text = (
-        f"**Headline:** weekly recalculation {verdict} total cost by **{abs(h['savings_pct']):.1%}** "
-        f"({eur(abs(h['savings']))}) compared with a quarterly refresh. Fill rate moves from "
-        f"{h['baseline_fill']:.1%} to {h['adaptive_fill']:.1%}, and average inventory value changes by "
-        f"{h['adaptive_inv'] / h['baseline_inv'] - 1:+.1%}. Adaptive is cheaper for {n_better} of "
-        f"{len(imp)} materials.")
-    if h["savings"] > 0 and top_share > 0.5:
-        text += (f" Most of the gain ({top_share:.0%}) comes from **{top_pat.replace('_', ' ')}** "
-                 f"materials. Without them, total cost changes by {-rest / rest_base:+.1%}, "
-                 "which is close to break-even.")
-    st.info(text)
     st.caption(f"Reference only: a setting that is never updated would cost {eur(h['static_cost'])} "
                f"with a fill rate of {h['static_fill']:.1%}. It is not used for the headline, because "
                "comparing against neglected master data overstates the benefit.")
-
-    segmented_section(cfg, sl_matrix, kpis, summ, ds)
+    classification_expander(ds)
 
     left, right = st.columns([1.15, 1])
     with left:

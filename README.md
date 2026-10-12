@@ -143,7 +143,7 @@ history or a planner's judgement, rather than one year and a fixed cut-off.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Headline result vs. the quarterly refresh, the segmented-policy comparison with its per-material demand classification, cost by method, the ABC × XYZ segment matrix with savings per cell, results by demand pattern, top materials by impact (including where adaptive does worse) |
+| **Overview** | One side-by-side comparison of the three policies (quarterly refresh, adaptive for all, segmented): total cost, % vs. quarterly, fill rate and number of EISBE changes. Below it, a two-sentence headline, why the segmented policy falls short, and the per-material demand classification in an expander. Further down: cost by method, the ABC × XYZ segment matrix with savings per cell, results by demand pattern, top materials by impact (including where adaptive does worse) |
 | **Material drill-down** | Demand, on-hand inventory per method (quarterly vs. adaptive by default), safety stock over time, and KPIs for one material |
 | **Step-by-step replay** | Day-by-day playback with ▶ Play / ⏸ Pause / ⏭ Next day / ⏮ Reset and a speed control (default slow: 1 day per second). Shows receipts, issues, POs placed and EISBE recalculations as they happen |
 | **SAP export** | Proposed EISBE/MINBE changes with reason and status. Planners can approve or reject the large changes in the table, then download the proposal list and the MM17 upload file |

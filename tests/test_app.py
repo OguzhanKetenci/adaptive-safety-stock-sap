@@ -22,8 +22,13 @@ def _goto(at, page):
 def test_overview_renders_headline(at):
     assert not at.exception
     assert any("Headline" in i.value for i in at.info)
-    assert len(at.metric) >= 7
-    assert any("Segmented policy" in h.value for h in at.subheader)
+    # one comparison: 3 policies x (total cost, fill rate, EISBE changes)
+    labels = [m.label for m in at.metric]
+    assert labels[:9].count("Total cost") == 3 and labels[:9].count("Fill rate") == 3
+    assert labels[:9].count("EISBE changes ≥ 5 %") == 3
+    assert any("Segmented policy" in m.value for m in at.markdown)
+    assert len(at.info) == 1 and len(at.warning) + len(at.success) == 1
+    assert not any("Segmented policy" in h.value for h in at.subheader)   # no duplicate section
 
 
 def test_drilldown(at):
